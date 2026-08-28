@@ -464,7 +464,12 @@ if analyze_button:
                         "historical_observations",
                         0
                     ),
-
+                    
+                    "Correlation Reliability": driver.get(
+                        "correlation_reliability",
+                        "Unknown"
+                    ),
+                    
                     "Driver Score": round(
                         float(
                             driver.get(

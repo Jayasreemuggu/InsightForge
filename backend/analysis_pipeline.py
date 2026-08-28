@@ -239,6 +239,10 @@ def run_analysis(
             "historical_observations": driver_row[
                 "historical_observations"
             ],
+            
+            "correlation_reliability": driver_row[
+                "correlation_reliability"
+            ],
 
             "supporting_evidence": driver_evidence.get(
                 driver_name,
@@ -297,6 +301,7 @@ Each driver contains:
 - driver_score
 - historical_observations
 - supporting_evidence
+- correlation_reliability
 
 Interpretation rules:
 
@@ -329,6 +334,12 @@ Interpretation rules:
 
 - historical_observations is the number of pre-period observations used to calculate the historical correlation.
 - Correlations based on a small number of observations should be treated cautiously.
+
+- correlation_reliability describes the reliability
+  of the historical correlation based only on the
+  number of available pre-period observations.
+- Do not describe Limited or Very Limited correlations
+  as strong evidence.
 
 Evidence strength:
 

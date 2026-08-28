@@ -176,7 +176,12 @@ def analyze_driver_changes(
             "correlation": correlation,
             "direction_alignment": direction_alignment,
             "driver_score": driver_score,
-            "historical_observations": historical_observations
+            "historical_observations": historical_observations,
+            "correlation_reliability": (
+                "Very Limited" if historical_observations < 5
+                else "Limited" if historical_observations < 10
+                else "Moderate"
+            )
         })
 
     return (
