@@ -352,7 +352,7 @@ if analyze_button:
                 direction = "→ No Change"
 
             with driver_columns[i]:
-                
+
                 st.write(
                     f"**{display_name}**"
                 )
@@ -363,7 +363,8 @@ if analyze_button:
 
                 st.caption(
                     direction
-                )            
+                )
+
 
         # ====================================================
         # DRIVER CHANGE COMPARISON
@@ -379,7 +380,7 @@ if analyze_button:
                 "percentage_change"
             ]
         ].copy()
-        
+
         # Shorter labels for the chart
         driver_chart["Driver"] = driver_chart["Driver"].replace({
             "Support Resolution Hours": "Support Resolution",
@@ -464,12 +465,12 @@ if analyze_button:
                         "historical_observations",
                         0
                     ),
-                    
+
                     "Correlation Reliability": driver.get(
                         "correlation_reliability",
                         "Unknown"
                     ),
-                    
+
                     "Correlation p-value": round(
                         float(
                             driver.get(
@@ -484,7 +485,7 @@ if analyze_button:
                         "correlation_significance",
                         "Unknown"
                     ),
-                    
+
                     "Driver Score": round(
                         float(
                             driver.get(
@@ -511,6 +512,78 @@ if analyze_button:
             "Correlation and driver score represent observed "
             "historical associations. They do not establish causation."
         )
+
+
+        # ====================================================
+        # INVESTIGATION EVIDENCE CHAIN
+        # ====================================================
+
+        st.divider()
+
+        st.header(
+            "Investigation Evidence Chain"
+        )
+
+        st.caption(
+            "How the observed KPI change was investigated "
+            "from quantitative signals to supporting evidence."
+        )
+
+        chain_cols = st.columns(4)
+
+        with chain_cols[0]:
+
+            st.metric(
+                "1. KPI Change",
+                f"{result['kpi_change']:+.2f}%"
+            )
+
+            st.caption(
+                "Significant movement detected"
+            )
+
+        with chain_cols[1]:
+
+            st.metric(
+                "2. Drivers",
+                str(len(result["drivers"]))
+            )
+
+            st.caption(
+                "Observed associated drivers"
+            )
+
+        with chain_cols[2]:
+
+            evidence_count = sum(
+                len(
+                    driver.get(
+                        "supporting_evidence",
+                        []
+                    )
+                )
+                for driver in result["drivers"]
+            )
+
+            st.metric(
+                "3. Evidence",
+                str(evidence_count)
+            )
+
+            st.caption(
+                "Customer feedback matched"
+            )
+
+        with chain_cols[3]:
+
+            st.metric(
+                "4. Evidence Strength",
+                result["confidence"]
+            )
+
+            st.caption(
+                "Overall evidence assessment"
+            )
 
 
         # ====================================================
