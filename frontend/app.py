@@ -195,7 +195,7 @@ if analyze_button:
 
         st.line_chart(
             chart_data["revenue"],
-            use_container_width=True
+            width="stretch"
         )
 
 
