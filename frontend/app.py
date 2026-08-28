@@ -58,9 +58,17 @@ sales_df["date"] = pd.to_datetime(
     sales_df["date"]
 )
 
+available_regions = (
+    sales_df["region"]
+    .dropna()
+    .drop_duplicates()
+    .sort_values()
+    .tolist()
+)
+
 region = st.sidebar.selectbox(
     "Region",
-    ["North", "South"]
+    available_regions
 )
 
 available_dates = (
