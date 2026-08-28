@@ -1,0 +1,11 @@
+date,region,customer_segment,feedback
+2025-05-01,North,Enterprise,"Support issues were resolved quickly and service was reliable."
+2025-05-01,North,Enterprise,"Product performance was good and support response was fast."
+2025-06-01,North,Enterprise,"Support tickets are taking much longer to resolve."
+2025-06-01,North,Enterprise,"We have unresolved issues that have been open for several days."
+2025-06-01,North,Enterprise,"Product usage has decreased because several issues remain unresolved."
+2025-06-01,North,Enterprise,"The recent support delays are affecting our experience."
+2025-06-01,North,SMB,"Support response has become slower than usual."
+2025-06-01,South,Enterprise,"Support response remains acceptable."
+2025-06-01,South,SMB,"Product usage is stable and service is reliable."
+2025-07-01,North,Enterprise,"Support response improved after the previous month's delays."
