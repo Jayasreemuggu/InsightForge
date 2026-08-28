@@ -236,6 +236,10 @@ def run_analysis(
             "driver_score": driver_row[
                 "driver_score"
             ],
+            "historical_observations": driver_row[
+                "historical_observations"
+            ],
+
             "supporting_evidence": driver_evidence.get(
                 driver_name,
                 []
@@ -260,7 +264,7 @@ def run_analysis(
         kpi_change,
         len(driver_records),
         len(all_evidence),
-        len(all_evidence)
+        qualitative_evidence_count
     )
 
 

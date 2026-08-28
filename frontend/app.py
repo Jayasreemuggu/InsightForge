@@ -1,10 +1,17 @@
 import sys
 from pathlib import Path
 
-# Allow imports from the project root
-sys.path.append(
-    str(Path(__file__).resolve().parent.parent)
-)
+# ============================================================
+# PROJECT PATH
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(PROJECT_ROOT))
+
+
+# ============================================================
+# IMPORTS
+# ============================================================
 
 import streamlit as st
 import pandas as pd
@@ -28,7 +35,15 @@ st.set_page_config(
 # ============================================================
 
 st.title("InsightForge")
-st.subheader("Evidence-Driven KPI Investigation")
+
+st.subheader(
+    "Evidence-Driven KPI Investigation"
+)
+
+st.caption(
+    "Detect significant KPI changes, identify observed drivers, "
+    "connect customer evidence, and generate an evidence-grounded AI insight."
+)
 
 
 # ============================================================
@@ -44,11 +59,13 @@ region = st.sidebar.selectbox(
 
 date = st.sidebar.selectbox(
     "Period",
-    ["2025-06-01", "2025-07-01"]
+    ["2025-06-01", "2025-07-01"],
+    format_func=lambda x: pd.to_datetime(x).strftime("%B %Y")
 )
 
 analyze_button = st.sidebar.button(
-    "Analyze KPI"
+    "Analyze KPI",
+    width="stretch"
 )
 
 
@@ -79,7 +96,6 @@ if analyze_button:
 
         st.success("Analysis completed")
 
-
         # ====================================================
         # KPI OVERVIEW
         # ====================================================
@@ -103,13 +119,53 @@ if analyze_button:
         with col3:
             st.metric(
                 "Revenue Change",
-                f"{result['kpi_change']:.2f}%"
+                f"{result['kpi_change']:+.2f}%"
             )
 
         with col4:
             st.metric(
                 "Evidence Strength",
                 result["confidence"]
+            )
+
+
+        # ====================================================
+        # INVESTIGATION SUMMARY
+        # ====================================================
+
+        st.divider()
+
+        st.header("Investigation Summary")
+
+        summary_col1, summary_col2 = st.columns(2)
+
+        with summary_col1:
+
+            st.markdown(
+                f"""
+                **Investigated Period**
+
+                {pd.to_datetime(result["date"]).strftime("%B %Y")}
+                """
+            )
+
+        with summary_col2:
+
+            change = float(result["kpi_change"])
+
+            if change > 0:
+                movement = "Revenue increased"
+            elif change < 0:
+                movement = "Revenue decreased"
+            else:
+                movement = "Revenue remained unchanged"
+
+            st.markdown(
+                f"""
+                **KPI Movement**
+
+                {movement} by **{abs(change):.2f}%**
+                """
             )
 
 
@@ -129,17 +185,15 @@ if analyze_button:
             trend_df["date"]
         )
 
-        # Filter selected region
-        region_trend = trend_df[
-            trend_df["region"] == result["region"]
-        ][
-            ["date", "revenue"]
-        ].sort_values("date")
-
-
-        # ----------------------------------------------------
-        # Month information
-        # ----------------------------------------------------
+        region_trend = (
+            trend_df[
+                trend_df["region"] == result["region"]
+            ][
+                ["date", "revenue"]
+            ]
+            .sort_values("date")
+            .copy()
+        )
 
         region_trend["month_number"] = (
             region_trend["date"].dt.month
@@ -148,11 +202,6 @@ if analyze_button:
         region_trend["month"] = (
             region_trend["date"].dt.strftime("%b")
         )
-
-
-        # ----------------------------------------------------
-        # Force chronological month ordering
-        # ----------------------------------------------------
 
         month_order = [
             "Jan",
@@ -176,32 +225,20 @@ if analyze_button:
         )
 
         region_trend = region_trend.sort_values(
-            "month"
+            "month_number"
         )
 
-
-        # ----------------------------------------------------
-        # Revenue chart
-        # ----------------------------------------------------
-
-        chart_data = region_trend[
-            [
-                "month",
-                "revenue"
+        chart_data = (
+            region_trend[
+                ["month", "revenue"]
             ]
-        ].set_index(
-            "month"
+            .set_index("month")
         )
 
         st.line_chart(
             chart_data["revenue"],
             width="stretch"
         )
-
-
-        # ----------------------------------------------------
-        # Investigated month
-        # ----------------------------------------------------
 
         investigated_date = pd.to_datetime(
             result["date"]
@@ -221,15 +258,24 @@ if analyze_button:
                 investigated_date.strftime("%B %Y")
             )
 
-            st.metric(
-                "Investigated Month Revenue",
-                f"₹{investigated_revenue:,.0f}",
-                f"{result['kpi_change']:+.2f}% vs previous month"
-            )
+            metric_col1, metric_col2 = st.columns(2)
+
+            with metric_col1:
+
+                st.metric(
+                    "Investigated Month Revenue",
+                    f"₹{investigated_revenue:,.0f}"
+                )
+
+            with metric_col2:
+
+                st.metric(
+                    "Change vs Previous Month",
+                    f"{result['kpi_change']:+.2f}%"
+                )
 
             st.caption(
-                f"Investigated period: "
-                f"{investigated_month}"
+                f"Investigated period: {investigated_month}"
             )
 
 
@@ -239,18 +285,11 @@ if analyze_button:
 
         st.divider()
 
-        st.header(
-            "Top Observed Drivers"
-        )
+        st.header("Top Observed Drivers")
 
         driver_df = pd.DataFrame(
             result["drivers"]
         )
-
-
-        # ----------------------------------------------------
-        # Clean driver names
-        # ----------------------------------------------------
 
         driver_df["Driver"] = (
             driver_df["driver"]
@@ -264,40 +303,44 @@ if analyze_button:
         )
 
 
-        # ----------------------------------------------------
-        # Driver summary
-        # ----------------------------------------------------
+        # ====================================================
+        # DRIVER CARDS
+        # ====================================================
 
-        for i, driver in enumerate(
-            result["drivers"],
-            start=1
+        driver_columns = st.columns(
+            len(driver_df)
+        )
+
+        for i, (_, driver) in enumerate(
+            driver_df.iterrows()
         ):
 
             change = float(
                 driver["percentage_change"]
             )
 
+            display_name = driver["Driver"]
+
             if change > 0:
-                direction = "increase"
-
+                direction = "↑ Increase"
             elif change < 0:
-                direction = "decrease"
-
+                direction = "↓ Decrease"
             else:
-                direction = "no change"
+                direction = "→ No Change"
 
-            display_name = (
-                driver["driver"]
-                .replace("_", " ")
-                .title()
-            )
+            with driver_columns[i]:
+                
+                st.write(
+                    f"**{display_name}**"
+                )
 
-            st.write(
-                f"**{i}. {display_name}** — "
-                f"{change:+.2f}% "
-                f"({direction})"
-            )
+                st.markdown(
+                    f"### {change:+.2f}%"
+                )
 
+                st.caption(
+                    direction
+                )            
 
         # ====================================================
         # DRIVER CHANGE COMPARISON
@@ -313,38 +356,27 @@ if analyze_button:
                 "percentage_change"
             ]
         ].copy()
-
-
+        
         # Shorter labels for the chart
-        driver_chart["Chart Label"] = (
-            driver_chart["Driver"]
-            .replace(
-                {
-                    "Product Usage":
-                        "Product Usage",
+        driver_chart["Driver"] = driver_chart["Driver"].replace({
+            "Support Resolution Hours": "Support Resolution",
+            "Product Usage": "Product Usage",
+            "Renewal Rate": "Renewal Rate"
+        })
 
-                    "Support Resolution Hours":
-                        "Support Resolution",
-
-                    "Renewal Rate":
-                        "Renewal Rate"
-                }
-            )
+        driver_chart = driver_chart.sort_values(
+            "percentage_change"
         )
 
-        driver_chart = driver_chart[
-            [
-                "Chart Label",
-                "percentage_change"
-            ]
-        ].set_index(
-            "Chart Label"
+        driver_chart = driver_chart.set_index(
+            "Driver"
         )
-
 
         st.bar_chart(
             driver_chart["percentage_change"],
-            use_container_width=True
+            horizontal=True,
+            width="stretch",
+            height=280
         )
 
         st.caption(
@@ -361,31 +393,80 @@ if analyze_button:
             "Driver Details"
         )
 
-        display_df = driver_df[
-            [
-                "Driver",
-                "previous_value",
-                "current_value",
-                "percentage_change"
-            ]
-        ].copy()
+        display_rows = []
 
-        display_df.columns = [
-            "Driver",
-            "Previous Value",
-            "Current Value",
-            "Change (%)"
-        ]
+        for driver in result["drivers"]:
 
-        display_df["Change (%)"] = (
-            display_df["Change (%)"]
-            .round(2)
+            driver_name = (
+                driver["driver"]
+                .replace("_", " ")
+                .title()
+            )
+
+            display_rows.append(
+                {
+                    "Driver": driver_name,
+
+                    "Previous Value": driver.get(
+                        "previous_value",
+                        "-"
+                    ),
+
+                    "Current Value": driver.get(
+                        "current_value",
+                        "-"
+                    ),
+
+                    "Change (%)": round(
+                        float(
+                            driver.get(
+                                "percentage_change",
+                                0
+                            )
+                        ),
+                        2
+                    ),
+
+                    "Correlation": round(
+                        float(
+                            driver.get(
+                                "correlation",
+                                0
+                            )
+                        ),
+                        3
+                    ),
+
+                    "Historical Observations": driver.get(
+                        "historical_observations",
+                        0
+                    ),
+
+                    "Driver Score": round(
+                        float(
+                            driver.get(
+                                "driver_score",
+                                0
+                            )
+                        ),
+                        2
+                    )
+                }
+            )
+
+        display_df = pd.DataFrame(
+            display_rows
         )
 
         st.dataframe(
             display_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True
+        )
+
+        st.caption(
+            "Correlation and driver score represent observed "
+            "historical associations. They do not establish causation."
         )
 
 
@@ -403,11 +484,6 @@ if analyze_button:
             "Customer feedback is grouped according "
             "to the observed driver it supports."
         )
-
-
-        # ----------------------------------------------------
-        # Evidence for each driver
-        # ----------------------------------------------------
 
         for driver in result["drivers"]:
 
@@ -491,7 +567,8 @@ if analyze_button:
             "Evidence strength is a heuristic based on "
             "the available KPI change, driver count, and "
             "supporting evidence. It is not statistical "
-            "confidence."
+            "confidence. Observed associations do not "
+            "establish causation."
         )
 
 
@@ -504,4 +581,22 @@ else:
     st.info(
         "Select a region and period, then click "
         "**Analyze KPI** to investigate a business change."
+    )
+
+    st.markdown(
+        """
+        ### Investigation Workflow
+
+        **1. Detect** → Identify significant revenue movement
+
+        **2. Analyze** → Find the strongest observed drivers
+
+        **3. Retrieve** → Find relevant customer feedback
+
+        **4. Rank** → Prioritize supporting evidence
+
+        **5. Explain** → Generate an evidence-grounded AI explanation
+
+        **6. Recommend** → Produce one practical next action
+        """
     )
