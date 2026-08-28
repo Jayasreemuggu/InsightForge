@@ -52,15 +52,30 @@ st.caption(
 
 st.sidebar.header("Investigation")
 
+sales_df = pd.read_csv("data/sales.csv")
+
+sales_df["date"] = pd.to_datetime(
+    sales_df["date"]
+)
+
 region = st.sidebar.selectbox(
     "Region",
     ["North", "South"]
 )
 
+available_dates = (
+    sales_df["date"]
+    .drop_duplicates()
+    .sort_values()
+    .dt.strftime("%Y-%m-%d")
+    .tolist()
+)
+
 date = st.sidebar.selectbox(
     "Period",
-    ["2025-06-01", "2025-07-01"],
-    format_func=lambda x: pd.to_datetime(x).strftime("%B %Y")
+    available_dates,
+    format_func=lambda x:
+        pd.to_datetime(x).strftime("%B %Y")
 )
 
 analyze_button = st.sidebar.button(
