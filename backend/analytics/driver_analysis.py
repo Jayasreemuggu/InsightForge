@@ -1,5 +1,5 @@
 import pandas as pd
-
+from scipy.stats import pearsonr
 
 def analyze_drivers(
     df: pd.DataFrame,
@@ -77,7 +77,11 @@ def analyze_driver_changes(
                 "percentage_change",
                 "correlation",
                 "direction_alignment",
-                "driver_score"
+                "driver_score",
+                "historical_observations",
+                "correlation_reliability",
+                "correlation_p_value",
+                "correlation_significance"
             ]
         )
 
@@ -130,15 +134,33 @@ def analyze_driver_changes(
 
         historical_observations = len(historical)
 
-        if len(historical) >= 2:
-            correlation = historical[target].corr(
+        if len(historical) >= 3:
+            correlation, correlation_p_value = pearsonr(
+                historical[target],
                 historical[driver]
             )
         else:
             correlation = 0.0
+            correlation_p_value = 1.0
 
         if pd.isna(correlation):
             correlation = 0.0
+
+        if pd.isna(correlation_p_value):
+            correlation_p_value = 1.0
+        
+        if historical_observations < 5:
+            correlation_reliability = "Very Limited"
+        elif historical_observations < 10:
+            correlation_reliability = "Limited"
+        else:
+            correlation_reliability = "Moderate"
+
+        correlation_significance = (
+            "Statistically significant"
+            if correlation_p_value < 0.05
+            else "Not statistically significant"
+        )
 
         # Check whether the driver movement is directionally
         # consistent with its historical relationship with revenue.
@@ -177,11 +199,9 @@ def analyze_driver_changes(
             "direction_alignment": direction_alignment,
             "driver_score": driver_score,
             "historical_observations": historical_observations,
-            "correlation_reliability": (
-                "Very Limited" if historical_observations < 5
-                else "Limited" if historical_observations < 10
-                else "Moderate"
-            )
+            "correlation_reliability": correlation_reliability,
+            "correlation_p_value": correlation_p_value,
+            "correlation_significance": correlation_significance
         })
 
     return (

@@ -470,6 +470,21 @@ if analyze_button:
                         "Unknown"
                     ),
                     
+                    "Correlation p-value": round(
+                        float(
+                            driver.get(
+                                "correlation_p_value",
+                                1.0
+                            )
+                        ),
+                        4
+                    ),
+
+                    "Correlation Significance": driver.get(
+                        "correlation_significance",
+                        "Unknown"
+                    ),
+                    
                     "Driver Score": round(
                         float(
                             driver.get(

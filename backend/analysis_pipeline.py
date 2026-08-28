@@ -268,6 +268,14 @@ def run_analysis(
             "correlation_reliability": driver_row[
                 "correlation_reliability"
             ],
+            
+            "correlation_p_value": driver_row[
+                "correlation_p_value"
+            ],
+
+            "correlation_significance": driver_row[
+                "correlation_significance"
+            ],
 
             "supporting_evidence": driver_evidence.get(
                 driver_name,
@@ -325,8 +333,10 @@ Each driver contains:
 - direction_alignment
 - driver_score
 - historical_observations
-- supporting_evidence
 - correlation_reliability
+- correlation_p_value
+- correlation_significance
+- supporting_evidence
 
 Interpretation rules:
 
@@ -365,6 +375,13 @@ Interpretation rules:
   number of available pre-period observations.
 - Do not describe Limited or Very Limited correlations
   as strong evidence.
+- correlation_p_value represents the p-value of the
+  historical Pearson correlation.
+- correlation_significance indicates whether the
+  correlation passes the 0.05 significance threshold.
+- Statistical significance does not establish causation.
+- Correlations based on few observations should still
+  be treated cautiously even if the p-value is below 0.05.
 
 Evidence strength:
 
