@@ -141,11 +141,36 @@ def run_analysis(
 
     for driver in top_drivers["driver"]:
 
-        # Convert driver name into useful keywords
-        driver_keywords = [
-            word.lower()
-            for word in driver.split("_")
-        ]
+        # Use driver-specific keywords based on the
+        # actual language present in customer feedback.
+        driver_keyword_map = {
+            "product_usage": [
+                "product usage",
+                "product performance"
+            ],
+
+            "support_resolution_hours": [
+                "support tickets",
+                "support response",
+                "support delays",
+                "support",
+                "slower",
+                "longer to resolve"
+            ],
+
+            "renewal_rate": [
+                "renewal",
+                "renew"
+            ]
+        }
+
+        driver_keywords = driver_keyword_map.get(
+            driver,
+            [
+                word.lower()
+                for word in driver.split("_")
+            ]
+        )
 
         # Find feedback containing at least one
         # driver-related keyword
