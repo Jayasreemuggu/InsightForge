@@ -100,13 +100,29 @@ def analyze_driver_changes(
             / previous_revenue
         ) * 100
 
-    numeric_columns = region_df.select_dtypes(
-        include="number"
-    ).columns
+        # ====================================================
+    # Define business drivers
+    # ====================================================
+    #
+    # Only variables intended to explain revenue movement
+    # are treated as drivers.
+    #
+    # Orders is excluded because it is an operational KPI
+    # closely tied to revenue rather than an independent
+    # explanatory driver.
+    #
 
     driver_columns = [
-        col for col in numeric_columns
-        if col != target
+        "support_resolution_hours",
+        "product_usage",
+        "renewal_rate"
+    ]
+
+    # Keep only drivers that actually exist in the dataset.
+    driver_columns = [
+        col
+        for col in driver_columns
+        if col in region_df.columns
     ]
 
     results = []
@@ -156,11 +172,17 @@ def analyze_driver_changes(
         else:
             correlation_reliability = "Moderate"
 
-        correlation_significance = (
-            "Statistically significant"
-            if correlation_p_value < 0.05
-            else "Not statistically significant"
-        )
+        # Statistical significance should only be treated as
+        # meaningful when enough historical observations exist.
+        #
+        # With fewer than 10 observations, the correlation may
+        # appear significant but is not considered reliable enough
+        # for InsightForge's evidence assessment.
+
+        if correlation_p_value < 0.05:
+            correlation_significance = "Statistically significant"
+        else:
+            correlation_significance = "Not statistically significant"
 
         # Check whether the driver movement is directionally
         # consistent with its historical relationship with revenue.
@@ -185,9 +207,41 @@ def analyze_driver_changes(
 
         # Transparent association score:
         # magnitude of current change × historical association.
+        # ====================================================
+        # Driver score
+        # ====================================================
+        #
+        # Combine:
+        # 1. Current driver movement
+        # 2. Historical correlation
+        # 3. Statistical significance
+        # 4. Historical sample-size reliability
+        #
+        # This prevents a very strong correlation based on
+        # only a few observations from dominating the ranking.
+        #
+
+        if historical_observations >= 10 and correlation_p_value < 0.05:
+            significance_weight = 1.0
+        elif historical_observations >= 10 and correlation_p_value < 0.10:
+            significance_weight = 0.75
+        else:
+            significance_weight = 0.5
+
+        if historical_observations >= 12:
+            sample_weight = 1.0
+        elif historical_observations >= 10:
+            sample_weight = 0.9
+        elif historical_observations >= 5:
+            sample_weight = 0.7
+        else:
+            sample_weight = 0.4
+
         driver_score = (
             abs(percentage_change)
             * abs(correlation)
+            * significance_weight
+            * sample_weight
         )
 
         results.append({

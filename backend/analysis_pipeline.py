@@ -1,6 +1,7 @@
 import pandas as pd
 
-from backend.analytics.kpi import calculate_monthly_revenue
+from backend.config_loader import get_kpi_definition
+from backend.data_reconciliation import reconcile_sources
 from backend.analytics.change_detection import calculate_percentage_change
 from backend.analytics.anomaly_detection import detect_significant_changes
 from backend.analytics.driver_analysis import analyze_driver_changes
@@ -9,19 +10,38 @@ from backend.evidence.retrieval import retrieve_feedback
 from backend.evidence.ranking import rank_evidence
 from backend.llm.gemini_service import generate_insight
 
-
 def run_analysis(
     sales_file: str,
     feedback_file: str,
     region: str,
-    date: str
+    date: str,
+    product_usage_file: str = "data/product_usage.csv",
+    renewal_file: str = "data/renewal_data.csv",
+    support_file: str = "data/support_tickets.csv"
 ):
+    
     # ==================================================
-    # 1. Calculate KPI
+    # 0. Load governed KPI semantic contract
     # ==================================================
 
-    df = calculate_monthly_revenue(
-        sales_file
+    kpi_definition = get_kpi_definition("revenue")
+    
+    revenue_column = kpi_definition["calculation"]["column"]
+
+    if revenue_column != "revenue":
+        raise ValueError(
+            f"Expected revenue column, got '{revenue_column}'."
+        )
+        
+    # ==================================================
+    # 1. Reconcile heterogeneous sources
+    # ==================================================
+
+    df = reconcile_sources(
+        sales_file=sales_file,
+        product_usage_file=product_usage_file,
+        renewal_file=renewal_file,
+        support_file=support_file
     )
 
 
@@ -128,28 +148,33 @@ def run_analysis(
     )
 
 
-    if not is_significant:
+    if pd.isna(kpi_change):
+        return {
+            "error": (
+                f"No valid KPI change could be calculated for "
+                f"{region} during {date}. "
+                "A previous period is required for comparison."
+            ),
+            "abstained": True
+        }
 
+    if abs(kpi_change) < 5:
         return {
             "error": (
                 f"No significant KPI change detected for "
                 f"{region} during {date}. "
                 f"The change was {kpi_change:.2f}%, "
-                f"below the 5% investigation threshold."
-            )
+                "below the 5% investigation threshold."
+            ),
+            "abstained": True
         }
-
 
     # ==================================================
     # 8. Analyze driver changes
     # ==================================================
 
-    sales_df = pd.read_csv(
-        sales_file
-    )
-
     drivers = analyze_driver_changes(
-        sales_df,
+        df,
         region,
         date
     )
@@ -347,13 +372,66 @@ def run_analysis(
         for driver in driver_records
         if driver["supporting_evidence"]
     )
+
+    historical_observations = min(
+        (
+            driver["historical_observations"]
+            for driver in driver_records
+        ),
+        default=0
+    )
+    
+    
     confidence = calculate_confidence(
         kpi_change,
         len(driver_records),
         len(all_evidence),
-        qualitative_evidence_count
+        qualitative_evidence_count,
+        historical_observations
     )
+    
+        # ==================================================
+    # 14B. Sparse-history safety gate
+    # ==================================================
+    #
+    # Do not allow the LLM to generate driver conclusions
+    # when there is insufficient historical evidence.
+    #
+    # This is deterministic business logic, not an LLM decision.
+    #
 
+    MIN_HISTORICAL_OBSERVATIONS = 3
+
+    if historical_observations < MIN_HISTORICAL_OBSERVATIONS:
+
+        return {
+            "region": region,
+            "date": date,
+            "kpi": "Revenue",
+            "kpi_change": kpi_change,
+            "regional_comparison": regional_comparison,
+            "drivers": driver_records,
+            "evidence": all_evidence,
+            "confidence": "Limited",
+            "analysis_abstained": True,
+            "explanation": (
+                "The revenue movement was detected, but there is "
+                "insufficient historical data to reliably identify "
+                "explanatory drivers."
+            ),
+            "uncertainty": (
+                f"Only {historical_observations} historical observations "
+                "were available for driver analysis. This is insufficient "
+                "to establish a reliable historical relationship. "
+                "The system therefore abstains from generating an "
+                "AI-based driver explanation."
+            ),
+            "recommended_action": (
+                "Collect additional historical observations before "
+                "using driver relationships for decision-making, "
+                "and conduct human review of the current revenue movement."
+            )
+        }
 
     # ==================================================
     # 15. Build LLM prompt
@@ -430,8 +508,19 @@ Interpretation rules:
 - correlation_significance indicates whether the
   correlation passes the 0.05 significance threshold.
 - Statistical significance does not establish causation.
-- Correlations based on few observations should still
-  be treated cautiously even if the p-value is below 0.05.
+
+IMPORTANT STATISTICAL INTERPRETATION RULES:
+
+- The supplied correlation_significance field is authoritative.
+- Do not recalculate or override the supplied significance classification.
+- If correlation_significance is "Statistically significant",
+  describe it as statistically significant.
+- If correlation_significance is "Not statistically significant",
+  describe it as not statistically significant.
+- Always mention historical_observations and
+  correlation_reliability when discussing correlations.
+- Statistical significance does not establish causation.
+- Limited or Very Limited correlation reliability must be clearly stated.
 
 Evidence strength:
 
@@ -440,6 +529,9 @@ Evidence strength:
 Rules:
 
 - Do not claim causation.
+- Preserve driver-specific statistical results exactly.
+  Do not merge, average, or generalize p-values or
+  statistical-significance labels across drivers.
 - Describe drivers as observed
   associations.
 - Use only the supplied evidence.
@@ -490,6 +582,7 @@ this structure:
         "drivers": driver_records,
         "evidence": all_evidence,
         "confidence": confidence,
+        "analysis_abstained": False,
         "explanation": insight["explanation"],
         "uncertainty": insight["uncertainty"],
         "recommended_action": insight[

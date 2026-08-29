@@ -1,0 +1,139 @@
+kpis:
+
+  revenue:
+    display_name: "Revenue"
+    description: "Total revenue generated during the selected period."
+
+    data_type: "currency"
+    unit: "INR"
+
+    calculation:
+      aggregation: "sum"
+      column: "revenue"
+
+    grain:
+      time: "monthly"
+      geography: "region"
+
+    comparison:
+      method: "month_over_month"
+
+    materiality:
+      percentage_threshold: 10
+      absolute_threshold: 10000
+
+    drivers:
+      - product_usage
+      - renewal_rate
+      - support_resolution_hours
+      - orders
+
+    source:
+      system: "sales_system"
+      dataset: "sales.csv"
+      refresh_frequency: "monthly"
+
+    access:
+      roles:
+        - analyst
+        - manager
+        - executive
+
+
+  product_usage:
+    display_name: "Product Usage"
+    description: "Average product usage score for the selected region and period."
+
+    data_type: "numeric"
+    unit: "score"
+
+    calculation:
+      aggregation: "mean"
+      column: "product_usage"
+
+    grain:
+      time: "monthly"
+      geography: "region"
+
+    comparison:
+      method: "month_over_month"
+
+    materiality:
+      percentage_threshold: 10
+
+    source:
+      system: "product_analytics"
+      dataset: "sales.csv"
+      refresh_frequency: "monthly"
+
+    access:
+      roles:
+        - analyst
+        - manager
+        - executive
+
+
+  renewal_rate:
+    display_name: "Renewal Rate"
+    description: "Percentage of customers renewing during the selected period."
+
+    data_type: "percentage"
+    unit: "%"
+
+    calculation:
+      aggregation: "mean"
+      column: "renewal_rate"
+
+    grain:
+      time: "monthly"
+      geography: "region"
+
+    comparison:
+      method: "month_over_month"
+
+    materiality:
+      percentage_threshold: 5
+
+    source:
+      system: "customer_success"
+      dataset: "sales.csv"
+      refresh_frequency: "monthly"
+
+    access:
+      roles:
+        - analyst
+        - manager
+        - executive
+
+
+  support_resolution_hours:
+    display_name: "Support Resolution Hours"
+    description: "Average time required to resolve customer support tickets."
+
+    data_type: "numeric"
+    unit: "hours"
+
+    calculation:
+      aggregation: "mean"
+      column: "support_resolution_hours"
+
+    grain:
+      time: "monthly"
+      geography: "region"
+
+    comparison:
+      method: "month_over_month"
+
+    materiality:
+      percentage_threshold: 20
+
+    source:
+      system: "support_system"
+      dataset: "sales.csv"
+      refresh_frequency: "daily"
+
+    access:
+      roles:
+        - analyst
+        - manager
+        - executive

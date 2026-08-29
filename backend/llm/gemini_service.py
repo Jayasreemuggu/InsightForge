@@ -104,6 +104,10 @@ def generate_insight(prompt: str) -> dict:
     # Call Gemini
     # --------------------------------------------------------
 
+        # --------------------------------------------------------
+    # Call Gemini
+    # --------------------------------------------------------
+
     try:
 
         interaction = client.interactions.create(
@@ -113,14 +117,64 @@ def generate_insight(prompt: str) -> dict:
 
     except Exception as error:
 
+        error_text = str(error)
+
         print(
-            f"Gemini API error: {error}"
+            f"Gemini API error: {error_text}"
         )
 
+        # ----------------------------------------------------
+        # Handle Gemini quota / rate-limit errors
+        # ----------------------------------------------------
+
+        if (
+            "429" in error_text
+            or "quota exceeded" in error_text.lower()
+            or "rate limit" in error_text.lower()
+        ):
+
+            return fallback_response(
+                explanation=(
+                    "The verified KPI, driver, and customer "
+                    "evidence analysis was completed, but the "
+                    "AI explanation is temporarily unavailable "
+                    "because the Gemini API quota was exceeded."
+                ),
+                uncertainty=(
+                    "The analytical results remain available. "
+                    "However, the AI-generated interpretation "
+                    "could not be produced until the Gemini "
+                    "API quota resets. Correlations indicate "
+                    "association rather than causation."
+                ),
+                recommended_action=(
+                    "Review the verified KPI movement, observed "
+                    "drivers, and supporting customer evidence. "
+                    "Retry the AI explanation after the Gemini "
+                    "quota resets."
+                )
+            )
+
+        # ----------------------------------------------------
+        # Handle other Gemini API errors
+        # ----------------------------------------------------
+
         return fallback_response(
-            explanation="The AI insight could not be generated because the Gemini service was unavailable.",
-            uncertainty="The underlying AI service returned an error. The analytical results shown by InsightForge should be reviewed manually.",
-            recommended_action="Review the KPI, driver analysis, and supporting evidence manually."
+            explanation=(
+                "The verified KPI, driver, and customer evidence "
+                "analysis was completed, but the AI explanation "
+                "could not be generated because the Gemini "
+                "service returned an error."
+            ),
+            uncertainty=(
+                "The underlying AI service returned an error. "
+                "The analytical results shown by InsightForge "
+                "should be reviewed manually."
+            ),
+            recommended_action=(
+                "Review the KPI, driver analysis, and supporting "
+                "evidence manually."
+            )
         )
 
 
@@ -170,9 +224,6 @@ def generate_insight(prompt: str) -> dict:
 
     except json.JSONDecodeError:
 
-        # Gemini sometimes returns valid text
-        # without following the requested JSON format.
-
         return fallback_response(
             explanation=response_text,
             uncertainty=(
@@ -196,7 +247,10 @@ def generate_insight(prompt: str) -> dict:
 
         return fallback_response(
             explanation="The AI returned an unexpected response structure.",
-            uncertainty="The Gemini response was valid JSON but was not a JSON object containing the expected fields.",
+            uncertainty=(
+                "The Gemini response was valid JSON but was "
+                "not a JSON object containing the expected fields."
+            ),
             recommended_action="Review the available evidence manually."
         )
 

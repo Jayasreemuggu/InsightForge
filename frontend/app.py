@@ -111,7 +111,24 @@ if analyze_button:
     # ERROR HANDLING
     # ========================================================
 
-    if "error" in result:
+    if result.get("abstained", False):
+
+        st.warning("Investigation abstained")
+
+        st.info(
+            result.get(
+                "error",
+                "The KPI change does not provide sufficient information for investigation."
+            )
+        )
+
+        st.caption(
+            "InsightForge did not generate driver analysis or an AI explanation "
+            "because the required comparison data was unavailable or the KPI "
+            "movement did not meet the investigation threshold."
+        )
+
+    elif "error" in result:
 
         st.error(result["error"])
 
@@ -407,7 +424,69 @@ if analyze_button:
             "Positive values indicate an increase; "
             "negative values indicate a decrease."
         )
+        
+        # ====================================================
+        # REGIONAL COMPARISON
+        # ====================================================
 
+        st.divider()
+
+        st.header(
+            "Regional Comparison"
+        )
+
+        st.caption(
+            "Compares the investigated region's revenue movement "
+            "with other available regions for the same period."
+        )
+
+        regional_comparison = result.get(
+            "regional_comparison",
+            []
+        )
+
+        if regional_comparison:
+
+            comparison_df = pd.DataFrame(
+                regional_comparison
+            )
+
+            comparison_df = comparison_df.rename(
+                columns={
+                    "region": "Region",
+                    "previous_revenue": "Previous Revenue",
+                    "current_revenue": "Current Revenue",
+                    "percentage_change": "Change (%)"
+                }
+            )
+
+            comparison_df["Previous Revenue"] = (
+                comparison_df["Previous Revenue"]
+                .round(2)
+            )
+
+            comparison_df["Current Revenue"] = (
+                comparison_df["Current Revenue"]
+                .round(2)
+            )
+
+            comparison_df["Change (%)"] = (
+                comparison_df["Change (%)"]
+                .round(2)
+            )
+
+            st.dataframe(
+                comparison_df,
+                width="stretch",
+                hide_index=True
+            )
+
+        else:
+
+            st.caption(
+                "No comparison region data available "
+                "for this period."
+            )
 
         # ====================================================
         # DRIVER DETAILS
@@ -634,20 +713,41 @@ if analyze_button:
                 )
 
 
+        
         # ====================================================
         # AI EXPLANATION
         # ====================================================
 
-        st.divider()
+        
 
-        st.header(
-            "AI Explanation"
-        )
+        st.header("AI Explanation")
 
-        st.markdown(
-            result["explanation"]
-        )
+        if result.get("analysis_abstained", False):
 
+            st.warning(
+                "Analysis Abstained — Insufficient Historical Evidence"
+            )
+
+            st.markdown(
+                result["explanation"]
+            )
+
+        else:
+
+            explanation = result["explanation"].strip()
+
+            explanation = explanation.replace(
+                "product_usage",
+                "Product Usage"
+            ).replace(
+                "renewal_rate",
+                "Renewal Rate"
+            ).replace(
+                "support_resolution_hours",
+                "Support Resolution Hours"
+            )
+
+            st.markdown(explanation)
 
         # ====================================================
         # UNCERTAINTY
