@@ -67,10 +67,60 @@ def run_analysis(
     kpi_change = float(
         anomaly.iloc[0]["percentage_change"]
     )
+    
+    # ==================================================
+    # 6. Regional comparison
+    # ==================================================
 
+    comparison_rows = []
+
+    comparison_date = pd.to_datetime(date)
+
+    for comparison_region in df["region"].unique():
+
+        if comparison_region == region:
+            continue
+
+        comparison_current = df[
+            (df["region"] == comparison_region) &
+            (df["date"] == comparison_date)
+        ]
+
+        comparison_previous = df[
+            (df["region"] == comparison_region) &
+            (df["date"] < comparison_date)
+        ]
+
+        if comparison_current.empty or comparison_previous.empty:
+            continue
+
+        current_revenue = float(
+            comparison_current.iloc[0]["revenue"]
+        )
+
+        previous_revenue = float(
+            comparison_previous.sort_values("date").iloc[-1]["revenue"]
+        )
+
+        if previous_revenue == 0:
+            comparison_change = 0.0
+        else:
+            comparison_change = (
+                (current_revenue - previous_revenue)
+                / previous_revenue
+        ) * 100
+
+        comparison_rows.append({
+            "region": comparison_region,
+            "previous_revenue": previous_revenue,
+            "current_revenue": current_revenue,
+            "percentage_change": comparison_change
+        })
+
+    regional_comparison = comparison_rows
 
     # ==================================================
-    # 6. Check significance
+    # 7. Check significance
     # ==================================================
 
     is_significant = bool(
@@ -91,7 +141,7 @@ def run_analysis(
 
 
     # ==================================================
-    # 7. Analyze driver changes
+    # 8. Analyze driver changes
     # ==================================================
 
     sales_df = pd.read_csv(
@@ -106,14 +156,14 @@ def run_analysis(
 
 
     # ==================================================
-    # 8. Select top three observed drivers
+    # 9. Select top three observed drivers
     # ==================================================
 
     top_drivers = drivers.head(3).copy()
 
 
     # ==================================================
-    # 9. Retrieve customer feedback
+    # 10. Retrieve customer feedback
     # ==================================================
 
     feedback_df = pd.read_csv(
@@ -131,7 +181,7 @@ def run_analysis(
 
 
     # ==================================================
-    # 10. Match evidence to each driver
+    # 11. Match evidence to each driver
     # ==================================================
 
     driver_evidence = {}
@@ -222,7 +272,7 @@ def run_analysis(
 
 
     # ==================================================
-    # 11. Remove duplicate evidence
+    # 12. Remove duplicate evidence
     # ==================================================
 
     all_evidence = list(
@@ -231,7 +281,7 @@ def run_analysis(
 
 
     # ==================================================
-    # 12. Add evidence to each driver
+    # 13. Add evidence to each driver
     # ==================================================
 
     driver_records = []
@@ -289,7 +339,7 @@ def run_analysis(
 
 
     # ==================================================
-    # 13. Calculate evidence strength
+    # 14. Calculate evidence strength
     # ==================================================
     
     qualitative_evidence_count = sum(
@@ -306,7 +356,7 @@ def run_analysis(
 
 
     # ==================================================
-    # 14. Build LLM prompt
+    # 15. Build LLM prompt
     # ==================================================
 
     prompt = f"""
@@ -419,7 +469,7 @@ this structure:
 
 
     # ==================================================
-    # 15. Generate structured AI insight
+    # 16. Generate structured AI insight
     # ==================================================
 
     insight = generate_insight(
@@ -428,7 +478,7 @@ this structure:
 
 
     # ==================================================
-    # 16. Return complete analysis
+    # 17. Return complete analysis
     # ==================================================
 
     return {
@@ -436,6 +486,7 @@ this structure:
         "date": date,
         "kpi": "Revenue",
         "kpi_change": kpi_change,
+        "regional_comparison": regional_comparison,
         "drivers": driver_records,
         "evidence": all_evidence,
         "confidence": confidence,
