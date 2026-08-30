@@ -15,6 +15,7 @@ sys.path.append(str(PROJECT_ROOT))
 
 import streamlit as st
 import pandas as pd
+import requests
 
 from backend.analysis_pipeline import run_analysis
 
@@ -86,6 +87,15 @@ date = st.sidebar.selectbox(
         pd.to_datetime(x).strftime("%B %Y")
 )
 
+persona = st.sidebar.selectbox(
+    "Persona",
+    [
+        "Executive",
+        "Manager",
+        "Analyst"
+    ]
+)
+
 analyze_button = st.sidebar.button(
     "Analyze KPI",
     width="stretch"
@@ -104,7 +114,8 @@ if analyze_button:
             "data/sales.csv",
             "data/customer_feedback.csv",
             region,
-            date
+            date,
+            persona=persona
         )
 
     # ========================================================
@@ -786,7 +797,100 @@ if analyze_button:
             "confidence. Observed associations do not "
             "establish causation."
         )
+        
+        # ====================================================
+        # ANALYST / BUSINESS FEEDBACK
+        # ====================================================
 
+        st.divider()
+
+        st.header("Analyst / Business Feedback")
+
+        st.caption(
+            "Feedback is stored and used to refine future investigations "
+            "for the same KPI, region, period, and persona."
+        )
+
+        feedback_type = st.selectbox(
+            "Feedback Type",
+            [
+                "useful",
+                "not_useful",
+                "correct",
+                "incorrect",
+                "correction"
+            ],
+            key="feedback_type"
+        )
+
+        rating = st.slider(
+            "Insight Rating",
+            min_value=1,
+            max_value=5,
+            value=4,
+            key="feedback_rating"
+        )
+
+        correction = st.text_area(
+            "Correction",
+            placeholder=(
+                "Example: Support resolution hours should not "
+                "be treated as a strong driver."
+            ),
+            key="feedback_correction"
+        )
+
+        comment = st.text_area(
+            "Comment",
+            placeholder=(
+                "Explain why the insight should be accepted "
+                "or corrected."
+            ),
+            key="feedback_comment"
+        )
+
+        if st.button(
+            "Submit Feedback",
+            key="submit_feedback"
+        ):
+
+            feedback_payload = {
+                "region": result["region"],
+                "date": result["date"],
+                "kpi": result["kpi"],
+                "persona": result["persona"],
+                "feedback_type": feedback_type,
+                "rating": rating,
+                "correction": correction,
+                "comment": comment
+            }
+
+            try:
+
+                response = requests.post(
+                    "http://127.0.0.1:8000/feedback",
+                    json=feedback_payload
+                )
+
+                if response.status_code == 200:
+
+                    st.success(
+                        "Feedback recorded successfully. "
+                        "Future analyses can use this feedback."
+                    )
+
+                else:
+
+                    st.error(
+                        f"Feedback submission failed: "
+                        f"{response.text}"
+                    )
+
+            except Exception as e:
+
+                st.error(
+                    f"Could not connect to InsightForge API: {e}"
+                )
 
 # ============================================================
 # INITIAL STATE

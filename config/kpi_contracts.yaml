@@ -32,6 +32,57 @@ kpis:
       system: "sales_system"
       dataset: "sales.csv"
       refresh_frequency: "monthly"
+      expected_latency: "24h"
+
+    lineage:
+      source_type: "transactional"
+      transformation: "monthly aggregation by region"
+      analytical_method: "deterministic aggregation + statistical driver analysis"
+
+    access:
+      roles:
+        - analyst
+        - manager
+        - executive
+
+
+  orders:
+    display_name: "Orders"
+    description: "Total number of orders recorded during the selected period."
+
+    data_type: "numeric"
+    unit: "orders"
+
+    calculation:
+      aggregation: "sum"
+      column: "orders"
+
+    grain:
+      time: "monthly"
+      geography: "region"
+
+    comparison:
+      method: "month_over_month"
+
+    materiality:
+      percentage_threshold: 10
+      absolute_threshold: 100
+
+    drivers:
+      - product_usage
+      - renewal_rate
+      - support_resolution_hours
+
+    source:
+      system: "sales_system"
+      dataset: "sales.csv"
+      refresh_frequency: "monthly"
+      expected_latency: "24h"
+
+    lineage:
+      source_type: "transactional"
+      transformation: "monthly aggregation by region"
+      analytical_method: "deterministic aggregation + statistical driver analysis"
 
     access:
       roles:
@@ -63,8 +114,14 @@ kpis:
 
     source:
       system: "product_analytics"
-      dataset: "sales.csv"
-      refresh_frequency: "monthly"
+      dataset: "product_usage.csv"
+      refresh_frequency: "daily"
+      expected_latency: "6h"
+
+    lineage:
+      source_type: "product_analytics"
+      transformation: "daily observations reconciled to monthly regional mean"
+      analytical_method: "aggregation + correlation analysis"
 
     access:
       roles:
@@ -96,8 +153,14 @@ kpis:
 
     source:
       system: "customer_success"
-      dataset: "sales.csv"
-      refresh_frequency: "monthly"
+      dataset: "renewal_data.csv"
+      refresh_frequency: "weekly"
+      expected_latency: "48h"
+
+    lineage:
+      source_type: "customer_success"
+      transformation: "weekly observations reconciled to monthly regional mean"
+      analytical_method: "aggregation + correlation analysis"
 
     access:
       roles:
@@ -129,8 +192,14 @@ kpis:
 
     source:
       system: "support_system"
-      dataset: "sales.csv"
+      dataset: "support_tickets.csv"
       refresh_frequency: "daily"
+      expected_latency: "6h"
+
+    lineage:
+      source_type: "support_operations"
+      transformation: "ticket-level observations reconciled to monthly regional mean"
+      analytical_method: "aggregation + correlation analysis"
 
     access:
       roles:

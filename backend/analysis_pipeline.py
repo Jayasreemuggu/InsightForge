@@ -1,66 +1,80 @@
 import pandas as pd
+import time
 
-from backend.config_loader import get_kpi_definition
-from backend.data_reconciliation import reconcile_sources
+from backend.analytics.kpi import calculate_monthly_revenue
 from backend.analytics.change_detection import calculate_percentage_change
 from backend.analytics.anomaly_detection import detect_significant_changes
+from backend.analytics.contribution import calculate_driver_contribution
 from backend.analytics.driver_analysis import analyze_driver_changes
 from backend.analytics.confidence import calculate_confidence
 from backend.evidence.retrieval import retrieve_feedback
 from backend.evidence.ranking import rank_evidence
+from backend.reconciliation import reconcile_sources
+from backend.feedback import get_relevant_feedback
 from backend.llm.gemini_service import generate_insight
+
 
 def run_analysis(
     sales_file: str,
     feedback_file: str,
     region: str,
     date: str,
-    product_usage_file: str = "data/product_usage.csv",
-    renewal_file: str = "data/renewal_data.csv",
-    support_file: str = "data/support_tickets.csv"
+    persona: str,
+    pipeline_start = time.perf_counter() 
 ):
-    
-    # ==================================================
-    # 0. Load governed KPI semantic contract
-    # ==================================================
+    total_start = time.perf_counter()
 
-    kpi_definition = get_kpi_definition("revenue")
-    
-    revenue_column = kpi_definition["calculation"]["column"]
+    def log_time(label, start):
+        elapsed = time.perf_counter() - start
+        print(f"[LATENCY] {label}: {elapsed:.3f}s")
+        return elapsed
 
-    if revenue_column != "revenue":
-        raise ValueError(
-            f"Expected revenue column, got '{revenue_column}'."
-        )
-        
     # ==================================================
-    # 1. Reconcile heterogeneous sources
+    # Retrieve previous analyst/business feedback
     # ==================================================
-
-    df = reconcile_sources(
-        sales_file=sales_file,
-        product_usage_file=product_usage_file,
-        renewal_file=renewal_file,
-        support_file=support_file
+    t = time.perf_counter()
+    previous_feedback = get_relevant_feedback(
+        region=region,
+        date=date,
+        kpi="Revenue",
+        persona=persona
     )
 
+    log_time("Initial feedback retrieval", t)
+    
+    print("PREVIOUS FEEDBACK:")
+    print(previous_feedback)
+
+    # ==================================================
+    # 1. Calculate KPI
+    # ==================================================
+    t = time.perf_counter()
+    df = calculate_monthly_revenue(
+        sales_file
+    )
+    
+    log_time("KPI calculation", t)
+    print(f"[PERF] calculate_monthly_revenue: {time.perf_counter() - t:.3f}s")
 
     # ==================================================
     # 2. Calculate KPI percentage change
     # ==================================================
-
+    t = time.perf_counter()
     df = calculate_percentage_change(
         df
     )
-
+    log_time("Percentage change", t)
+    print(f"[PERF] percentage_change: {time.perf_counter() - t:.3f}s")
 
     # ==================================================
     # 3. Detect significant changes
     # ==================================================
-
+    t = time.perf_counter()
     df = detect_significant_changes(
         df
     )
+    log_time("Change detection", t)
+    print(f"[PERF] anomaly_detection: {time.perf_counter() - t:.3f}s")
 
 
     # ==================================================
@@ -148,62 +162,135 @@ def run_analysis(
     )
 
 
-    if pd.isna(kpi_change):
-        return {
-            "error": (
-                f"No valid KPI change could be calculated for "
-                f"{region} during {date}. "
-                "A previous period is required for comparison."
-            ),
-            "abstained": True
-        }
+    if not is_significant:
 
-    if abs(kpi_change) < 5:
         return {
             "error": (
                 f"No significant KPI change detected for "
                 f"{region} during {date}. "
                 f"The change was {kpi_change:.2f}%, "
-                "below the 5% investigation threshold."
-            ),
-            "abstained": True
+                f"below the 5% investigation threshold."
+            )
         }
+
 
     # ==================================================
     # 8. Analyze driver changes
     # ==================================================
+    t = time.perf_counter()
+    sales_df = pd.read_csv(
+        sales_file
+    )
 
+    # ==================================================
+    # Sparse-history detection
+    # ==================================================
+
+    historical_observations = len(
+        sales_df[
+            (sales_df["region"] == region) &
+            (pd.to_datetime(sales_df["date"]) < pd.to_datetime(date))
+        ]
+    )
+
+    log_time("Sales CSV loading", t)
+
+    t = time.perf_counter()
     drivers = analyze_driver_changes(
-        df,
+        sales_df,
         region,
         date
     )
-
+    log_time("Driver analysis", t)
+    print(f"[PERF] driver_analysis: {time.perf_counter() - t:.3f}s")
 
     # ==================================================
-    # 9. Select top three observed drivers
+    # 9. Retrieve analyst/business feedback
+    # ==================================================
+    t = time.perf_counter()
+    learned_feedback = get_relevant_feedback(
+        region=region,
+        date=date,
+        kpi="Revenue",
+        persona=persona
+    )
+    log_time("Learned feedback retrieval", t)
+
+    # ==================================================
+    # 10. Select top three observed drivers
     # ==================================================
 
     top_drivers = drivers.head(3).copy()
 
+    top_drivers = calculate_driver_contribution(
+        top_drivers
+    )
 
     # ==================================================
-    # 10. Retrieve customer feedback
+    # 10A. Apply learned analyst/business feedback
     # ==================================================
 
+    if learned_feedback:
+        for feedback in learned_feedback:
+
+            if feedback["feedback_type"] != "correction":
+                continue
+
+            correction_text = (
+                feedback.get("correction", "")
+                .lower()
+            )
+
+            # If previous feedback says that
+            # support resolution hours should not
+            # be treated as a strong driver,
+            # remove it from the top-driver ranking.
+            if (
+                "support resolution hours" in correction_text
+                and
+                "not be treated" in correction_text
+            ):
+                top_drivers = top_drivers[
+                    top_drivers["driver"]
+                    != "support_resolution_hours"
+                ].copy()
+
+        # Keep maximum three drivers
+        top_drivers = top_drivers.head(3).copy()
+    
+
+    # ==================================================
+    # 10B. Retrieve customer feedback
+    # ==================================================
+    t = time.perf_counter()
     feedback_df = pd.read_csv(
         feedback_file
     )
+    log_time("Customer feedback loading/filtering", t)
 
     feedback_df["date"] = pd.to_datetime(
         feedback_df["date"]
     )
 
+    # ==================================================
+    # 10C. Reconcile heterogeneous sources
+    # ==================================================
+
+    reconciliation = reconcile_sources(
+        sales_df=sales_df,
+        feedback_df=feedback_df,
+        region=region,
+        date=date
+    )
+
+    feedback_df["analysis_month"] = (
+        feedback_df["date"].dt.to_period("M")
+    )
+
     period_feedback = feedback_df[
         (feedback_df["region"] == region) &
-        (feedback_df["date"] == pd.to_datetime(date))
+        (feedback_df["analysis_month"] == pd.to_datetime(date).to_period("M"))
     ].copy()
-
 
     # ==================================================
     # 11. Match evidence to each driver
@@ -336,6 +423,15 @@ def run_analysis(
             "driver_score": driver_row[
                 "driver_score"
             ],
+
+            "contribution_weight": driver_row[
+                "contribution_weight"
+            ],
+
+            "contribution_percentage": driver_row[
+                "contribution_percentage"
+            ],
+            
             "historical_observations": driver_row[
                 "historical_observations"
             ],
@@ -373,15 +469,6 @@ def run_analysis(
         if driver["supporting_evidence"]
     )
 
-    historical_observations = min(
-        (
-            driver["historical_observations"]
-            for driver in driver_records
-        ),
-        default=0
-    )
-    
-    
     confidence = calculate_confidence(
         kpi_change,
         len(driver_records),
@@ -389,200 +476,236 @@ def run_analysis(
         qualitative_evidence_count,
         historical_observations
     )
-    
-        # ==================================================
-    # 14B. Sparse-history safety gate
+
     # ==================================================
-    #
-    # Do not allow the LLM to generate driver conclusions
-    # when there is insufficient historical evidence.
-    #
-    # This is deterministic business logic, not an LLM decision.
-    #
+    # Sparse-history abstention
+    # ==================================================
 
-    MIN_HISTORICAL_OBSERVATIONS = 3
+    abstained = False
 
-    if historical_observations < MIN_HISTORICAL_OBSERVATIONS:
-
-        return {
-            "region": region,
-            "date": date,
-            "kpi": "Revenue",
-            "kpi_change": kpi_change,
-            "regional_comparison": regional_comparison,
-            "drivers": driver_records,
-            "evidence": all_evidence,
-            "confidence": "Limited",
-            "analysis_abstained": True,
-            "explanation": (
-                "The revenue movement was detected, but there is "
-                "insufficient historical data to reliably identify "
-                "explanatory drivers."
-            ),
-            "uncertainty": (
-                f"Only {historical_observations} historical observations "
-                "were available for driver analysis. This is insufficient "
-                "to establish a reliable historical relationship. "
-                "The system therefore abstains from generating an "
-                "AI-based driver explanation."
-            ),
-            "recommended_action": (
-                "Collect additional historical observations before "
-                "using driver relationships for decision-making, "
-                "and conduct human review of the current revenue movement."
-            )
-        }
+    if historical_observations < 3:
+        abstained = True
+        confidence = "Low"
 
     # ==================================================
     # 15. Build LLM prompt
     # ==================================================
 
     prompt = f"""
-You are InsightForge, an evidence-driven
-business intelligence assistant.
+        You are InsightForge, an evidence-driven
+        business intelligence assistant.
+        
+        Persona: {persona}
 
-Analyze the following verified business data.
+        Persona-specific guidance:
 
-KPI: Revenue
-Region: {region}
-Period: {date}
-Revenue change: {kpi_change:.2f}%
+        - Executive: provide a concise business summary,
+          key business impact, and one practical decision/action.
 
-Observed driver analysis:
+        - Analyst: provide detailed quantitative analysis,
+          ranked drivers, percentage changes, correlations,
+          significance, evidence, and recommended analytical
+          follow-up.
 
-{driver_records}
+        - Manager: focus on operational drivers,
+          controllable business levers, ownership, and
+          practical next steps.
 
-Each driver contains:
+        Adjust the explanation and recommended action
+        according to the persona, while preserving all
+        quantitative facts and uncertainty.
 
-- previous_value
-- current_value
-- percentage_change
-- correlation
-- direction_alignment
-- driver_score
-- historical_observations
-- correlation_reliability
-- correlation_p_value
-- correlation_significance
-- supporting_evidence
+        Analyze the following verified business data.
 
-Interpretation rules:
+        KPI: Revenue
+        Region: {region}
+        Period: {date}
+        Revenue change: {kpi_change:.2f}%
 
-- percentage_change is the observed
-  month-over-month driver change.
+        Observed driver analysis:
 
-- correlation represents historical
-  association with revenue using the
-  available pre-period observations.
+        {driver_records}
 
-- direction_alignment indicates whether
-  the current driver movement is
-  directionally consistent with its
-  historical relationship with revenue.
+        Each driver contains:
 
-- driver_score ranks observed driver
-  strength using change magnitude and
-  historical association.
+        - previous_value
+        - current_value
+        - percentage_change
+        - correlation
+        - direction_alignment
+        - driver_score
+        - historical_observations
+        - correlation_reliability
+        - correlation_p_value
+        - correlation_significance
+        - supporting_evidence
 
-- supporting_evidence contains customer
-  feedback specifically matched to that
-  driver.
+        Interpretation rules:
 
-- A driver without supporting_evidence
-  does NOT have direct qualitative
-  customer evidence.
+        - percentage_change is the observed
+        month-over-month driver change.
 
-- Correlation and driver scores indicate
-  association, not causation.
+        - correlation represents historical
+        association with revenue using the
+        available pre-period observations.
 
-- historical_observations is the number of pre-period observations used to calculate the historical correlation.
-- Correlations based on a small number of observations should be treated cautiously.
+        - direction_alignment indicates whether
+        the current driver movement is
+        directionally consistent with its
+        historical relationship with revenue.
 
-- correlation_reliability describes the reliability
-  of the historical correlation based only on the
-  number of available pre-period observations.
-- Do not describe Limited or Very Limited correlations
-  as strong evidence.
-- correlation_p_value represents the p-value of the
-  historical Pearson correlation.
-- correlation_significance indicates whether the
-  correlation passes the 0.05 significance threshold.
-- Statistical significance does not establish causation.
+        - driver_score ranks observed driver
+        strength using change magnitude and
+        historical association.
 
-IMPORTANT STATISTICAL INTERPRETATION RULES:
+        - supporting_evidence contains customer
+        feedback specifically matched to that
+        driver.
 
-- The supplied correlation_significance field is authoritative.
-- Do not recalculate or override the supplied significance classification.
-- If correlation_significance is "Statistically significant",
-  describe it as statistically significant.
-- If correlation_significance is "Not statistically significant",
-  describe it as not statistically significant.
-- Always mention historical_observations and
-  correlation_reliability when discussing correlations.
-- Statistical significance does not establish causation.
-- Limited or Very Limited correlation reliability must be clearly stated.
+        - A driver without supporting_evidence
+        does NOT have direct qualitative
+        customer evidence.
 
-Evidence strength:
+        - Correlation and driver scores indicate
+        association, not causation.
 
-{confidence}
+        - historical_observations is the number of pre-period observations used to calculate the historical correlation.
+        - Correlations based on a small number of observations should be treated cautiously.
 
-Rules:
+        - correlation_reliability describes the reliability
+        of the historical correlation based only on the
+        number of available pre-period observations.
+        - Do not describe Limited or Very Limited correlations
+        as strong evidence.
+        - correlation_p_value represents the p-value of the
+        historical Pearson correlation.
+        - correlation_significance indicates whether the
+        correlation passes the 0.05 significance threshold.
+        - Statistical significance does not establish causation.
+        - Correlations based on few observations should still
+        be treated cautiously even if the p-value is below 0.05.
 
-- Do not claim causation.
-- Preserve driver-specific statistical results exactly.
-  Do not merge, average, or generalize p-values or
-  statistical-significance labels across drivers.
-- Describe drivers as observed
-  associations.
-- Use only the supplied evidence.
-- Do not invent facts.
-- Do not claim qualitative evidence
-  exists when supporting_evidence is empty.
-- Clearly communicate uncertainty.
-- Treat evidence strength as a heuristic,
-  not statistical confidence.
-- Recommend one practical business action.
-- Human review remains necessary.
+        Evidence strength:
 
-Return ONLY valid JSON using exactly
-this structure:
+        {confidence}
 
-{{
-    "explanation":
-        "Brief evidence-grounded explanation",
+        Rules:
 
-    "uncertainty":
-        "Explain limitations and alternative explanations",
+        - Do not claim causation.
+        - Describe drivers as observed
+        associations.
+        - Use only the supplied evidence.
+        - Do not invent facts.
+        - Do not claim qualitative evidence
+        exists when supporting_evidence is empty.
+        - Clearly communicate uncertainty.
+        - Treat evidence strength as a heuristic,
+        not statistical confidence.
+        - Recommend one practical business action.
+        - Human review remains necessary.
 
-    "recommended_action":
-        "One practical next-best action"
-}}
-"""
+        Return ONLY valid JSON using exactly
+        this structure:
+
+        {{
+            "explanation":
+                "Brief evidence-grounded explanation",
+
+            "uncertainty":
+                "Explain limitations and alternative explanations",
+
+            "recommended_action":
+                "One practical next-best action"
+        }}
+        """
 
 
     # ==================================================
     # 16. Generate structured AI insight
     # ==================================================
-
+    t = time.perf_counter()
     insight = generate_insight(
-        prompt
+        prompt,
+        persona=persona
     )
-
+    log_time("Gemini/LLM generation", t)
+    print(f"[PERF] generate_insight: {time.perf_counter() - t:.3f}s")
 
     # ==================================================
-    # 17. Return complete analysis
+    # 17. Role-based entitlement filtering
     # ==================================================
 
+    normalized_persona = str(persona).strip().lower()
+
+    if normalized_persona not in {
+        "executive",
+        "manager",
+        "analyst"
+    }:
+        normalized_persona = "executive"
+
+    # Executive: high-level business information only
+    if normalized_persona == "executive":
+
+        role_drivers = []
+
+        for driver in driver_records[:3]:
+            role_drivers.append({
+                "driver": driver["driver"],
+                "percentage_change": driver["percentage_change"],
+                "driver_score": driver["driver_score"]
+            })
+
+        role_evidence = all_evidence[:3]
+
+    # Manager: operational drivers + evidence
+    elif normalized_persona == "manager":
+
+        role_drivers = []
+
+        for driver in driver_records[:5]:
+            role_drivers.append({
+                "driver": driver["driver"],
+                "previous_value": driver["previous_value"],
+                "current_value": driver["current_value"],
+                "percentage_change": driver["percentage_change"],
+                "driver_score": driver["driver_score"],
+                "supporting_evidence": driver.get(
+                    "supporting_evidence", []
+                )
+            })
+
+        role_evidence = all_evidence
+
+    # Analyst: full statistical information
+    else:
+
+        role_drivers = driver_records
+        role_evidence = all_evidence
+
+    # ==================================================
+    # 18. Return complete analysis
+    # ==================================================
+    log_time("TOTAL run_analysis", total_start)
+    print(
+        f"[PERF] TOTAL PIPELINE: "
+        f"{time.perf_counter() - pipeline_start:.3f}s"
+    )
+    
     return {
         "region": region,
         "date": date,
         "kpi": "Revenue",
+        "reconciliation": reconciliation,
         "kpi_change": kpi_change,
         "regional_comparison": regional_comparison,
         "drivers": driver_records,
+        "persona": normalized_persona,
+        "role_drivers": role_drivers,
+        "role_evidence": role_evidence,
         "evidence": all_evidence,
         "confidence": confidence,
-        "analysis_abstained": False,
+        "abstained": abstained,
         "explanation": insight["explanation"],
         "uncertainty": insight["uncertainty"],
         "recommended_action": insight[

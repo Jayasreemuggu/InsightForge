@@ -1,6 +1,8 @@
 import os
 import json
+import time
 
+from backend.analytics.llm_telemetry import build_llm_telemetry
 from dotenv import load_dotenv
 from google import genai
 
@@ -33,18 +35,71 @@ client = genai.Client(
 
 
 # ============================================================
+# TELEMETRY
+# ============================================================
+
+MODEL_NAME = "gemini-3.6-flash"
+
+# Gemini pricing should be configured here when known.
+# Do not invent pricing values.
+INPUT_COST_PER_1M_TOKENS = 0.75
+OUTPUT_COST_PER_1M_TOKENS = 3.75
+
+
+def build_telemetry(
+    latency_ms=None,
+    llm_calls=0,
+    input_tokens=0,
+    output_tokens=0,
+    estimated_cost=0.0,
+    error=None
+):
+    """
+    Build runtime telemetry for one LLM interaction.
+    """
+
+    estimated_cost = None
+
+    if (
+        input_tokens is not None
+        and output_tokens is not None
+        and INPUT_COST_PER_1M_TOKENS is not None
+        and OUTPUT_COST_PER_1M_TOKENS is not None
+    ):
+        estimated_cost = (
+            (input_tokens / 1_000_000)
+            * INPUT_COST_PER_1M_TOKENS
+            +
+            (output_tokens / 1_000_000)
+            * OUTPUT_COST_PER_1M_TOKENS
+        )
+
+    return {
+        "model": MODEL_NAME,
+        "latency_ms": latency_ms,
+        "llm_calls": llm_calls,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost": estimated_cost,
+        "error": error
+    }
+
+
+# ============================================================
 # DEFAULT FALLBACK RESPONSE
 # ============================================================
 
 def fallback_response(
     explanation="The AI insight could not be generated.",
     uncertainty="The AI service was unavailable or returned an invalid response.",
-    recommended_action="Review the available evidence manually before taking action."
+    recommended_action="Review the available evidence manually.",
+    telemetry=None
 ):
     return {
         "explanation": explanation,
         "uncertainty": uncertainty,
-        "recommended_action": recommended_action
+        "recommended_action": recommended_action,
+        "telemetry": telemetry or build_telemetry(latency_ms=latency_ms)
     }
 
 
@@ -59,7 +114,6 @@ def clean_response(response_text: str) -> str:
 
     response_text = response_text.strip()
 
-    # Remove Markdown code fences
     if response_text.startswith("```json"):
 
         response_text = response_text[
@@ -82,11 +136,140 @@ def clean_response(response_text: str) -> str:
 
 
 # ============================================================
+# EXTRACT TOKEN USAGE
+# ============================================================
+
+def extract_usage(interaction):
+
+    input_tokens = None
+    output_tokens = None
+
+    usage = getattr(
+        interaction,
+        "usage",
+        None
+    )
+
+    if usage is None:
+        return input_tokens, output_tokens
+
+    input_tokens = getattr(
+        usage,
+        "input_tokens",
+        None
+    )
+
+    output_tokens = getattr(
+        usage,
+        "output_tokens",
+        None
+    )
+
+    return input_tokens, output_tokens
+
+
+# ============================================================
 # GENERATE INSIGHT
 # ============================================================
 
-def generate_insight(prompt: str) -> dict:
+def generate_insight(
+    prompt: str,
+    persona: str = "Executive"
+) -> dict:
 
+    persona = str(persona).strip().lower()
+
+    persona_instructions = {
+        "executive": """
+You are generating an executive-level business insight.
+
+Focus on:
+- Exact KPI movement and business impact.
+- Top 1-3 likely drivers.
+- Materiality and priority.
+- Customer/business evidence.
+- Clear business risk or opportunity.
+- One practical recommended action.
+
+Keep the explanation concise and decision-oriented.
+Do not overwhelm the executive with statistical details unless they materially affect confidence.
+""",
+
+        "analyst": """
+You are generating an analyst-level business insight.
+
+Focus on:
+1. Exact KPI movement.
+2. Ranked drivers.
+3. Driver percentage changes.
+4. Correlations and statistical significance when available.
+5. Supporting customer evidence.
+6. Limitations and uncertainty.
+7. Recommended analytical follow-up.
+
+Preserve important quantitative details.
+Explicitly distinguish correlation from causation.
+""",
+
+        "manager": """
+You are generating a manager-level business insight.
+
+Focus on:
+- Exact KPI movement.
+- Main operational drivers.
+- Evidence supporting each driver.
+- Which drivers are controllable.
+- Practical corrective action.
+- Suggested owner or responsible function.
+- Expected monitoring metric.
+- Confidence and limitations.
+
+Translate analytical findings into operational decisions.
+Do not claim causation when only correlation is available.
+"""
+    }
+
+    persona_instruction = persona_instructions.get(
+        persona,
+        persona_instructions["executive"]
+    )
+
+    enhanced_prompt = f"""
+{persona_instruction}
+
+GENERAL RULES:
+
+The LLM is NOT the source of quantitative truth.
+All numerical values must come from the supplied analytical evidence.
+
+Do not invent:
+- KPI values
+- driver values
+- correlations
+- statistical significance
+- customer evidence
+- causal relationships
+- business events
+
+If evidence is insufficient or contradictory, explicitly state the limitation
+and recommend abstaining or requesting clarification.
+
+Return ONLY valid JSON with exactly these fields:
+
+{{
+    "explanation": "...",
+    "uncertainty": "...",
+    "recommended_action": "..."
+}}
+
+Correlation does not imply causation.
+
+PERSONA:
+{persona}
+
+ANALYTICAL CONTEXT:
+{prompt}
+"""
     # --------------------------------------------------------
     # Validate prompt
     # --------------------------------------------------------
@@ -95,32 +278,86 @@ def generate_insight(prompt: str) -> dict:
 
         return fallback_response(
             explanation="No analysis prompt was provided.",
-            uncertainty="The AI analysis could not be performed because the prompt was empty.",
-            recommended_action="Review the available KPI and driver evidence manually."
+            uncertainty=(
+                "The AI analysis could not be performed "
+                "because the prompt was empty."
+            ),
+            recommended_action=(
+                "Review the available KPI and driver "
+                "evidence manually."
+            )
         )
 
 
     # --------------------------------------------------------
-    # Call Gemini
+    # Runtime timer
     # --------------------------------------------------------
 
-        # --------------------------------------------------------
+    start_time = time.perf_counter()
+
+
+    # --------------------------------------------------------
     # Call Gemini
     # --------------------------------------------------------
 
     try:
 
         interaction = client.interactions.create(
-            model="gemini-3.6-flash",
-            input=prompt
+            model=MODEL_NAME,
+            input=enhanced_prompt
+        )
+
+        latency_ms = (
+            time.perf_counter() - start_time
+        ) * 1000
+
+        input_tokens, output_tokens = extract_usage(
+            interaction
+        )
+        
+        total_tokens = None
+
+        if (
+            input_tokens is not None
+            and output_tokens is not None
+        ):
+            total_tokens = (
+                input_tokens + output_tokens
+            )
+
+        llm_telemetry = {
+            "model": MODEL_NAME,
+            "model_calls": 1,
+            "latency_ms": round(latency_ms, 2),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens
+        }
+        telemetry = build_telemetry(
+            latency_ms=round(latency_ms, 2),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            llm_calls=1
         )
 
     except Exception as error:
+
+        latency_ms = (
+            time.perf_counter() - start_time
+        ) * 1000
 
         error_text = str(error)
 
         print(
             f"Gemini API error: {error_text}"
+        )
+
+        telemetry = build_telemetry(
+            latency_ms=round(latency_ms, 2),
+            input_tokens=None,
+            output_tokens=None,
+            llm_calls=1,
+            error=error_text
         )
 
         # ----------------------------------------------------
@@ -133,26 +370,72 @@ def generate_insight(prompt: str) -> dict:
             or "rate limit" in error_text.lower()
         ):
 
+            # Persona-specific deterministic fallback.
+            # Quantitative truth remains entirely based on
+            # the verified analytical pipeline.
+
+            if persona == "analyst":
+
+                fallback_explanation = (
+                    "The verified KPI, driver, and customer evidence "
+                    "analysis was completed, but Gemini was unavailable "
+                    "because the API quota was exceeded. The analytical "
+                    "results should be interpreted using the ranked "
+                    "drivers, percentage changes, correlations, and "
+                    "statistical significance already calculated."
+                )
+
+                fallback_action = (
+                    "Review the ranked driver statistics and validate "
+                    "the strongest associations using additional "
+                    "historical observations or causal analysis before "
+                    "drawing causal conclusions."
+                )
+
+            elif persona == "manager":
+
+                fallback_explanation = (
+                    "The verified KPI, driver, and customer evidence "
+                    "analysis was completed, but Gemini was unavailable "
+                    "because the API quota was exceeded. Focus on the "
+                    "observed operational drivers and the customer "
+                    "evidence supporting them."
+                )
+
+                fallback_action = (
+                    "Prioritize investigation of the controllable "
+                    "operational drivers, assign responsible teams, "
+                    "and monitor the affected KPI and driver metrics."
+                )
+
+            else:
+
+                fallback_explanation = (
+                    "The verified KPI, driver, and customer evidence "
+                    "analysis was completed, but Gemini was unavailable "
+                    "because the API quota was exceeded. The verified "
+                    "KPI movement and observed drivers remain available "
+                    "for decision-making."
+                )
+
+                fallback_action = (
+                    "Review the verified KPI movement and highest-ranked "
+                    "drivers, then prioritize the most material business "
+                    "issue while monitoring the KPI for recovery."
+                )
+
             return fallback_response(
-                explanation=(
-                    "The verified KPI, driver, and customer "
-                    "evidence analysis was completed, but the "
-                    "AI explanation is temporarily unavailable "
-                    "because the Gemini API quota was exceeded."
-                ),
+                explanation=fallback_explanation,
                 uncertainty=(
                     "The analytical results remain available. "
-                    "However, the AI-generated interpretation "
-                    "could not be produced until the Gemini "
-                    "API quota resets. Correlations indicate "
-                    "association rather than causation."
+                    "The AI-generated interpretation could not be "
+                    "produced because the Gemini API quota was exceeded. "
+                    "Correlations indicate association rather than "
+                    "causation, and historical correlation reliability "
+                    "may be limited."
                 ),
-                recommended_action=(
-                    "Review the verified KPI movement, observed "
-                    "drivers, and supporting customer evidence. "
-                    "Retry the AI explanation after the Gemini "
-                    "quota resets."
-                )
+                recommended_action=fallback_action,
+                telemetry=telemetry
             )
 
         # ----------------------------------------------------
@@ -161,10 +444,10 @@ def generate_insight(prompt: str) -> dict:
 
         return fallback_response(
             explanation=(
-                "The verified KPI, driver, and customer evidence "
-                "analysis was completed, but the AI explanation "
-                "could not be generated because the Gemini "
-                "service returned an error."
+                "The verified KPI, driver, and customer "
+                "evidence analysis was completed, but the AI "
+                "explanation could not be generated because "
+                "the Gemini service returned an error."
             ),
             uncertainty=(
                 "The underlying AI service returned an error. "
@@ -174,7 +457,8 @@ def generate_insight(prompt: str) -> dict:
             recommended_action=(
                 "Review the KPI, driver analysis, and supporting "
                 "evidence manually."
-            )
+            ),
+            telemetry=telemetry
         )
 
 
@@ -189,9 +473,18 @@ def generate_insight(prompt: str) -> dict:
     except AttributeError:
 
         return fallback_response(
-            explanation="The Gemini service returned an unexpected response.",
-            uncertainty="The AI response did not contain the expected output text.",
-            recommended_action="Review the available evidence manually."
+            explanation=(
+                "The Gemini service returned an "
+                "unexpected response."
+            ),
+            uncertainty=(
+                "The AI response did not contain the "
+                "expected output text."
+            ),
+            recommended_action=(
+                "Review the available evidence manually."
+            ),
+            telemetry=telemetry
         )
 
 
@@ -207,8 +500,13 @@ def generate_insight(prompt: str) -> dict:
 
         return fallback_response(
             explanation="Gemini returned an empty response.",
-            uncertainty="No AI-generated explanation was available.",
-            recommended_action="Review the available KPI and evidence manually."
+            uncertainty=(
+                "No AI-generated explanation was available."
+            ),
+            recommended_action=(
+                "Review the available KPI and evidence manually."
+            ),
+            telemetry=telemetry
         )
 
 
@@ -235,7 +533,8 @@ def generate_insight(prompt: str) -> dict:
             recommended_action=(
                 "Review the supplied KPI, driver analysis, "
                 "and supporting evidence before taking action."
-            )
+            ),
+            telemetry=telemetry
         )
 
 
@@ -246,12 +545,19 @@ def generate_insight(prompt: str) -> dict:
     if not isinstance(insight, dict):
 
         return fallback_response(
-            explanation="The AI returned an unexpected response structure.",
-            uncertainty=(
-                "The Gemini response was valid JSON but was "
-                "not a JSON object containing the expected fields."
+            explanation=(
+                "The AI returned an unexpected "
+                "response structure."
             ),
-            recommended_action="Review the available evidence manually."
+            uncertainty=(
+                "The Gemini response was valid JSON but "
+                "was not a JSON object containing the "
+                "expected fields."
+            ),
+            recommended_action=(
+                "Review the available evidence manually."
+            ),
+            telemetry=telemetry
         )
 
 
@@ -272,10 +578,6 @@ def generate_insight(prompt: str) -> dict:
     )
 
 
-    # --------------------------------------------------------
-    # Handle missing explanation
-    # --------------------------------------------------------
-
     if not explanation:
 
         explanation = (
@@ -284,10 +586,6 @@ def generate_insight(prompt: str) -> dict:
         )
 
 
-    # --------------------------------------------------------
-    # Handle missing uncertainty
-    # --------------------------------------------------------
-
     if not uncertainty:
 
         uncertainty = (
@@ -295,10 +593,6 @@ def generate_insight(prompt: str) -> dict:
             "provided by the AI response."
         )
 
-
-    # --------------------------------------------------------
-    # Handle missing recommendation
-    # --------------------------------------------------------
 
     if not recommended_action:
 
@@ -323,5 +617,8 @@ def generate_insight(prompt: str) -> dict:
 
         "recommended_action": str(
             recommended_action
-        )
+        ),
+
+        "telemetry": telemetry
     }
+    

@@ -1,0 +1,4 @@
+date,region,revenue,orders,support_resolution_hours,product_usage,renewal_rate
+2025-04-01,Test,100000,1000,10,80,90
+2025-05-01,Test,105000,1050,11,82,91
+2025-06-01,Test,70000,900,20,65,75
