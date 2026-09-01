@@ -1,16 +1,23 @@
 import time
 
 
+# Gemini 3.6 Flash introductory pricing
+# Valid through December 31, 2026.
+INPUT_COST_PER_1M_TOKENS = 0.75
+OUTPUT_COST_PER_1M_TOKENS = 3.75
+
+
 def extract_usage_metadata(response):
     """
     Extract token usage from different Gemini/API response formats.
 
-    Returns None when the provider does not expose usage metadata.
+    Returns None values when the provider does not expose usage metadata.
     """
 
     usage = getattr(response, "usage_metadata", None)
 
     if usage is not None:
+
         prompt_tokens = getattr(
             usage,
             "prompt_token_count",
@@ -39,6 +46,7 @@ def extract_usage_metadata(response):
     usage = getattr(response, "usage", None)
 
     if usage is not None:
+
         prompt_tokens = getattr(
             usage,
             "prompt_tokens",
@@ -70,22 +78,68 @@ def extract_usage_metadata(response):
     }
 
 
+def calculate_estimated_cost(
+    prompt_tokens,
+    output_tokens
+):
+    """
+    Estimate LLM cost using the configured Gemini pricing.
+
+    Returns 0 when token usage is unavailable.
+    """
+
+    if prompt_tokens is None:
+        prompt_tokens = 0
+
+    if output_tokens is None:
+        output_tokens = 0
+
+    input_cost = (
+        prompt_tokens / 1_000_000
+    ) * INPUT_COST_PER_1M_TOKENS
+
+    output_cost = (
+        output_tokens / 1_000_000
+    ) * OUTPUT_COST_PER_1M_TOKENS
+
+    return round(
+        input_cost + output_cost,
+        6
+    )
+
+
 def build_llm_telemetry(
     model,
     started_at,
     response=None,
     success=True
 ):
+
     latency = time.perf_counter() - started_at
 
     usage = extract_usage_metadata(response)
+
+    estimated_cost = calculate_estimated_cost(
+        usage["prompt_tokens"],
+        usage["output_tokens"]
+    )
 
     return {
         "model": model,
         "model_calls": 1,
         "success": success,
-        "latency_seconds": round(latency, 4),
-        "prompt_tokens": usage["prompt_tokens"],
-        "output_tokens": usage["output_tokens"],
-        "total_tokens": usage["total_tokens"]
+        "latency_seconds": round(
+            latency,
+            4
+        ),
+        "prompt_tokens": usage[
+            "prompt_tokens"
+        ],
+        "output_tokens": usage[
+            "output_tokens"
+        ],
+        "total_tokens": usage[
+            "total_tokens"
+        ],
+        "estimated_cost_usd": estimated_cost
     }

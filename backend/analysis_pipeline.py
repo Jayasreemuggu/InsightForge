@@ -12,6 +12,7 @@ from backend.evidence.ranking import rank_evidence
 from backend.reconciliation import reconcile_sources
 from backend.feedback import get_relevant_feedback
 from backend.llm.gemini_service import generate_insight
+from backend.config_loader import get_kpi_definition
 
 
 def run_analysis(
@@ -23,6 +24,18 @@ def run_analysis(
     pipeline_start = time.perf_counter() 
 ):
     total_start = time.perf_counter()
+
+    # Load governed KPI materiality rules
+    kpi_definition = get_kpi_definition("revenue")
+    materiality = kpi_definition.get("materiality", {})
+
+    percentage_threshold = materiality.get(
+        "percentage_threshold"
+    )
+
+    absolute_threshold = materiality.get(
+        "absolute_threshold"
+    )
 
     def log_time(label, start):
         elapsed = time.perf_counter() - start
@@ -71,7 +84,9 @@ def run_analysis(
     # ==================================================
     t = time.perf_counter()
     df = detect_significant_changes(
-        df
+        df,
+        percentage_threshold=percentage_threshold,
+        absolute_threshold=absolute_threshold
     )
     log_time("Change detection", t)
     print(f"[PERF] anomaly_detection: {time.perf_counter() - t:.3f}s")
@@ -272,25 +287,47 @@ def run_analysis(
         feedback_df["date"]
     )
 
-    # ==================================================
-    # 10C. Reconcile heterogeneous sources
-    # ==================================================
-
-    reconciliation = reconcile_sources(
-        sales_df=sales_df,
-        feedback_df=feedback_df,
-        region=region,
-        date=date
-    )
-
     feedback_df["analysis_month"] = (
         feedback_df["date"].dt.to_period("M")
     )
 
     period_feedback = feedback_df[
         (feedback_df["region"] == region) &
-        (feedback_df["analysis_month"] == pd.to_datetime(date).to_period("M"))
+        (
+            feedback_df["analysis_month"]
+            == pd.to_datetime(date).to_period("M")
+        )
     ].copy()
+
+    # ==================================================
+    # 10C. Load heterogeneous driver sources
+    # ==================================================
+
+    product_usage_df = pd.read_csv(
+        "data/product_usage.csv"
+    )
+
+    renewal_df = pd.read_csv(
+        "data/renewal_data.csv"
+    )
+
+    support_tickets_df = pd.read_csv(
+        "data/support_tickets.csv"
+    )
+
+    # ==================================================
+    # 10D. Reconcile heterogeneous sources
+    # ==================================================
+
+    reconciliation = reconcile_sources(
+        sales_df=sales_df,
+        feedback_df=feedback_df,
+        product_usage_df=product_usage_df,
+        renewal_df=renewal_df,
+        support_tickets_df=support_tickets_df,
+        region=region,
+        date=date
+    )
 
     # ==================================================
     # 11. Match evidence to each driver
@@ -364,32 +401,53 @@ def run_analysis(
                 driver_keywords
             )
 
-            evidence_list = (
-                matched["feedback"]
-                .tolist()
-            )
+            evidence_list = []
+
+            for _, evidence_row in matched.iterrows():
+
+                evidence_list.append({
+                    "feedback": evidence_row["feedback"],
+                    "evidence_score": float(
+                        evidence_row["evidence_score"]
+                    ),
+                    "evidence_strength": evidence_row[
+                        "evidence_strength"
+                    ],
+                    "matched_keywords": evidence_row[
+                        "matched_keywords"
+                    ]
+                })
 
         else:
 
             evidence_list = []
 
 
-        driver_evidence[driver] = (
-            evidence_list
-        )
+        driver_evidence[driver] = evidence_list
 
-        all_evidence.extend(
-            evidence_list
-        )
+        all_evidence.extend(evidence_list)
 
 
     # ==================================================
     # 12. Remove duplicate evidence
     # ==================================================
 
-    all_evidence = list(
-        dict.fromkeys(all_evidence)
-    )
+    unique_evidence = []
+    seen_feedback = set()
+
+    for evidence in all_evidence:
+
+        feedback_text = str(
+            evidence.get("feedback", "")
+        )
+
+        if feedback_text in seen_feedback:
+            continue
+
+        seen_feedback.add(feedback_text)
+        unique_evidence.append(evidence)
+
+    all_evidence = unique_evidence
 
 
     # ==================================================
@@ -710,5 +768,13 @@ def run_analysis(
         "uncertainty": insight["uncertainty"],
         "recommended_action": insight[
             "recommended_action"
-        ]
+        ],
+        "llm_available": insight.get(
+            "llm_available",
+            False
+        ),
+        "telemetry": insight.get(
+            "telemetry",
+            {}
+        ),
     }

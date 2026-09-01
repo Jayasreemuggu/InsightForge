@@ -18,6 +18,7 @@ import pandas as pd
 import requests
 
 from backend.analysis_pipeline import run_analysis
+from backend.analytics.llm_breakdown import get_llm_non_llm_breakdown
 
 
 # ============================================================
@@ -682,13 +683,10 @@ if analyze_button:
 
         st.divider()
 
-        st.header(
-            "Supporting Evidence"
-        )
+        st.header("Supporting Evidence")
 
         st.caption(
-            "Customer feedback is grouped according "
-            "to the observed driver it supports."
+            "Customer feedback matched to the observed drivers."
         )
 
         for driver in result["drivers"]:
@@ -699,9 +697,7 @@ if analyze_button:
                 .title()
             )
 
-            st.subheader(
-                driver_name
-            )
+            st.subheader(driver_name)
 
             supporting_evidence = driver.get(
                 "supporting_evidence",
@@ -712,19 +708,121 @@ if analyze_button:
 
                 for evidence in supporting_evidence:
 
-                    st.info(
-                        evidence
+                    feedback = evidence.get(
+                        "feedback",
+                        ""
+                    )
+
+                    evidence_strength = evidence.get(
+                        "evidence_strength",
+                        "Unknown"
+                    )
+
+                    evidence_score = evidence.get(
+                        "evidence_score",
+                        "N/A"
+                    )
+
+                    matched_keywords = evidence.get(
+                        "matched_keywords",
+                        []
+                    )
+
+                    matched_signals = " · ".join(
+                        matched_keywords
+                    )
+
+                    st.markdown(
+                        f"""
+                        <div style="
+                            border: 1px solid #444;
+                            border-radius: 10px;
+                            padding: 18px 20px;
+                            margin: 10px 0 16px 0;
+                            background-color: rgba(255,255,255,0.02);
+                        ">
+
+                            <div style="
+                                font-size: 13px;
+                                font-weight: 600;
+                                margin-bottom: 10px;
+                            ">
+                                Customer Feedback
+                            </div>
+
+                            <div style="
+                                border-left: 3px solid #666;
+                                padding-left: 14px;
+                                margin-bottom: 18px;
+                                font-size: 15px;
+                                line-height: 1.5;
+                            ">
+                                {feedback}
+                            </div>
+
+                            <div style="
+                                display: flex;
+                                gap: 80px;
+                                margin-bottom: 16px;
+                            ">
+
+                                <div>
+                                    <div style="
+                                        font-size: 12px;
+                                        color: #999;
+                                        margin-bottom: 5px;
+                                    ">
+                                        Evidence Strength
+                                    </div>
+
+                                    <div style="
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                    ">
+                                        {evidence_strength}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div style="
+                                        font-size: 12px;
+                                        color: #999;
+                                        margin-bottom: 5px;
+                                    ">
+                                        Evidence Score
+                                    </div>
+
+                                    <div style="
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                    ">
+                                        {evidence_score}
+                                    </div>
+                                </div>
+
+                            </div>
+
+                            <div style="
+                                font-size: 12px;
+                                color: #999;
+                            ">
+                                <strong style="color: #aaa;">
+                                    Matched Signals:
+                                </strong>
+                                {matched_signals}
+                            </div>
+
+                        </div>
+                        """,
+                        unsafe_allow_html=True
                     )
 
             else:
 
                 st.caption(
-                    "No direct qualitative evidence "
-                    "found for this driver."
+                    "No direct qualitative evidence found for this driver."
                 )
-
-
-        
+                
         # ====================================================
         # AI EXPLANATION
         # ====================================================
@@ -797,7 +895,261 @@ if analyze_button:
             "confidence. Observed associations do not "
             "establish causation."
         )
-        
+
+        # ====================================================
+        # LLM VS NON-LLM PROCESSING
+        # ====================================================
+
+        st.divider()
+
+        st.header("LLM vs Non-LLM Processing")
+
+        st.caption(
+            "Quantitative analysis remains deterministic. "
+            "The LLM is used only for language-based interpretation."
+        )
+
+        breakdown = get_llm_non_llm_breakdown()
+
+        non_llm = breakdown["non_llm"]
+        llm = breakdown["llm"]
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.markdown(
+                f"""
+                <div style="
+                    border: 1px solid #444;
+                    border-radius: 12px;
+                    padding: 22px;
+                    min-height: 430px;
+                ">
+
+                    <div style="
+                        font-size: 22px;
+                        font-weight: 650;
+                        margin-bottom: 6px;
+                    ">
+                        Non-LLM Processing
+                    </div>
+
+                    <div style="
+                        color: #999;
+                        font-size: 13px;
+                        margin-bottom: 20px;
+                    ">
+                        Deterministic business analysis
+                    </div>
+
+                    <div style="
+                        font-size: 30px;
+                        font-weight: 700;
+                        margin-bottom: 18px;
+                    ">
+                        {non_llm["component_count"]}
+                    </div>
+
+                    <div style="
+                        color: #999;
+                        font-size: 12px;
+                        margin-bottom: 18px;
+                    ">
+                        deterministic components
+                    </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            for component in non_llm["components"]:
+                st.markdown(
+                    f"""
+                    <div style="
+                        padding: 7px 0;
+                        font-size: 14px;
+                        border-bottom: 1px solid rgba(255,255,255,0.06);
+                    ">
+                        • {component}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            st.markdown(
+                "</div>",
+                unsafe_allow_html=True
+            )
+
+
+        with col2:
+
+            st.markdown(
+                f"""
+                <div style="
+                    border: 1px solid #444;
+                    border-radius: 12px;
+                    padding: 22px;
+                    min-height: 430px;
+                ">
+
+                    <div style="
+                        font-size: 22px;
+                        font-weight: 650;
+                        margin-bottom: 6px;
+                    ">
+                        LLM Processing
+                    </div>
+
+                    <div style="
+                        color: #999;
+                        font-size: 13px;
+                        margin-bottom: 20px;
+                    ">
+                        Natural-language interpretation
+                    </div>
+
+                    <div style="
+                        font-size: 30px;
+                        font-weight: 700;
+                        margin-bottom: 18px;
+                    ">
+                        {llm["component_count"]}
+                    </div>
+
+                    <div style="
+                        color: #999;
+                        font-size: 12px;
+                        margin-bottom: 18px;
+                    ">
+                        LLM components
+                    </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            for component in llm["components"]:
+                st.markdown(
+                    f"""
+                    <div style="
+                        padding: 10px 0;
+                        font-size: 14px;
+                        border-bottom: 1px solid rgba(255,255,255,0.06);
+                    ">
+                        • {component}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            st.markdown(
+                "</div>",
+                unsafe_allow_html=True
+            )
+
+        # ====================================================
+        # RUNTIME TELEMETRY
+        # ====================================================
+
+        st.divider()
+
+        st.header("Runtime Telemetry")
+
+        st.caption(
+            "Runtime measurements for the LLM interaction used in this investigation."
+        )
+
+        telemetry = result.get("telemetry", {})
+
+        if telemetry:
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Model",
+                    telemetry.get("model", "Unknown")
+                )
+
+            with col2:
+                st.metric(
+                    "LLM Calls",
+                    telemetry.get("llm_calls", 0)
+                )
+
+            with col3:
+                latency = telemetry.get(
+                    "latency_ms",
+                    None
+                )
+
+                if latency is not None:
+                    st.metric(
+                        "Latency",
+                        f"{latency:.2f} ms"
+                    )
+                else:
+                    st.metric(
+                        "Latency",
+                        "N/A"
+                    )
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Input Tokens",
+                    telemetry.get(
+                        "input_tokens",
+                        "N/A"
+                    )
+                )
+
+            with col2:
+                st.metric(
+                    "Output Tokens",
+                    telemetry.get(
+                        "output_tokens",
+                        "N/A"
+                    )
+                )
+
+            with col3:
+                st.metric(
+                    "Total Tokens",
+                    telemetry.get(
+                        "total_tokens",
+                        "N/A"
+                    )
+                )
+
+            estimated_cost = telemetry.get(
+                "estimated_cost",
+                None
+            )
+
+            if estimated_cost is not None:
+                st.metric(
+                    "Estimated Cost",
+                    f"${estimated_cost:.6f}"
+                )
+            else:
+                st.metric(
+                    "Estimated Cost",
+                    "N/A"
+                )
+
+            if telemetry.get("error"):
+                st.warning(
+                    f"LLM Error: {telemetry['error']}"
+                )
+
+        else:
+
+            st.info(
+                "Runtime telemetry is not available for this investigation."
+            )
+                
         # ====================================================
         # ANALYST / BUSINESS FEEDBACK
         # ====================================================

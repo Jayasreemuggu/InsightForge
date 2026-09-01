@@ -11,12 +11,27 @@ def test_sparse_history_abstention():
         persona="Executive"
     )
 
+    # Abstention state
     assert result["abstained"] is True
     assert result["confidence"] == "Low"
 
-    print("ABSTENTION TEST PASSED")
-    print("abstained:", result["abstained"])
-    print("confidence:", result["confidence"])
+    # Analytical results should still be available
+    assert "kpi_change" in result
+    assert "drivers" in result
+
+    # At least one driver must have insufficient history
+    assert any(
+        driver.get("historical_observations", 0) < 3
+        for driver in result["drivers"]
+    )
+
+    # System must communicate uncertainty
+    assert result["uncertainty"]
+    assert isinstance(result["uncertainty"], str)
+
+    # System must provide a safe next action
+    assert result["recommended_action"]
+    assert isinstance(result["recommended_action"], str)
 
 
 if __name__ == "__main__":

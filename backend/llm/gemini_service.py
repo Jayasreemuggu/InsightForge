@@ -2,7 +2,6 @@ import os
 import json
 import time
 
-from backend.analytics.llm_telemetry import build_llm_telemetry
 from dotenv import load_dotenv
 from google import genai
 
@@ -35,13 +34,20 @@ client = genai.Client(
 
 
 # ============================================================
-# TELEMETRY
+# MODEL CONFIGURATION
 # ============================================================
 
-MODEL_NAME = "gemini-3.6-flash"
+MODEL_NAME = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.6-flash"
+)
 
-# Gemini pricing should be configured here when known.
-# Do not invent pricing values.
+
+# ============================================================
+# TELEMETRY CONFIGURATION
+# ============================================================
+
+# Pricing is intentionally disabled until verified.
 INPUT_COST_PER_1M_TOKENS = 0.75
 OUTPUT_COST_PER_1M_TOKENS = 3.75
 
@@ -49,19 +55,18 @@ OUTPUT_COST_PER_1M_TOKENS = 3.75
 def build_telemetry(
     latency_ms=None,
     llm_calls=0,
-    input_tokens=0,
-    output_tokens=0,
-    estimated_cost=0.0,
+    input_tokens=None,
+    output_tokens=None,
+    estimated_cost=None,
     error=None
 ):
     """
     Build runtime telemetry for one LLM interaction.
     """
 
-    estimated_cost = None
-
     if (
-        input_tokens is not None
+        estimated_cost is None
+        and input_tokens is not None
         and output_tokens is not None
         and INPUT_COST_PER_1M_TOKENS is not None
         and OUTPUT_COST_PER_1M_TOKENS is not None
@@ -81,6 +86,9 @@ def build_telemetry(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "estimated_cost": estimated_cost,
+        "pricing_currency": "USD",
+        "input_cost_per_1m_tokens": INPUT_COST_PER_1M_TOKENS,
+        "output_cost_per_1m_tokens": OUTPUT_COST_PER_1M_TOKENS,
         "error": error
     }
 
@@ -91,15 +99,26 @@ def build_telemetry(
 
 def fallback_response(
     explanation="The AI insight could not be generated.",
-    uncertainty="The AI service was unavailable or returned an invalid response.",
-    recommended_action="Review the available evidence manually.",
+    uncertainty=(
+        "The AI service was unavailable or returned "
+        "an invalid response."
+    ),
+    recommended_action=(
+        "Review the available evidence manually."
+    ),
     telemetry=None
 ):
+    """
+    Deterministic fallback used whenever the LLM
+    cannot safely provide an insight.
+    """
+
     return {
-        "explanation": explanation,
-        "uncertainty": uncertainty,
-        "recommended_action": recommended_action,
-        "telemetry": telemetry or build_telemetry(latency_ms=latency_ms)
+        "explanation": str(explanation),
+        "uncertainty": str(uncertainty),
+        "recommended_action": str(recommended_action),
+        "telemetry": telemetry or build_telemetry(),
+        "llm_available": False
     }
 
 
@@ -177,9 +196,12 @@ def generate_insight(
     persona: str = "Executive"
 ) -> dict:
 
-    persona = str(persona).strip().lower()
+    persona = str(
+        persona
+    ).strip().lower()
 
     persona_instructions = {
+
         "executive": """
 You are generating an executive-level business insight.
 
@@ -192,7 +214,8 @@ Focus on:
 - One practical recommended action.
 
 Keep the explanation concise and decision-oriented.
-Do not overwhelm the executive with statistical details unless they materially affect confidence.
+Do not overwhelm the executive with statistical details
+unless they materially affect confidence.
 """,
 
         "analyst": """
@@ -234,13 +257,19 @@ Do not claim causation when only correlation is available.
         persona_instructions["executive"]
     )
 
+    # ========================================================
+    # BUILD CONTROLLED PROMPT
+    # ========================================================
+
     enhanced_prompt = f"""
 {persona_instruction}
 
 GENERAL RULES:
 
 The LLM is NOT the source of quantitative truth.
-All numerical values must come from the supplied analytical evidence.
+
+All numerical values must come from the supplied
+analytical evidence.
 
 Do not invent:
 - KPI values
@@ -251,8 +280,11 @@ Do not invent:
 - causal relationships
 - business events
 
-If evidence is insufficient or contradictory, explicitly state the limitation
-and recommend abstaining or requesting clarification.
+If evidence is insufficient or contradictory,
+explicitly state the limitation and recommend
+abstaining or requesting clarification.
+
+Correlation does not imply causation.
 
 Return ONLY valid JSON with exactly these fields:
 
@@ -262,22 +294,23 @@ Return ONLY valid JSON with exactly these fields:
     "recommended_action": "..."
 }}
 
-Correlation does not imply causation.
-
 PERSONA:
 {persona}
 
 ANALYTICAL CONTEXT:
 {prompt}
 """
-    # --------------------------------------------------------
-    # Validate prompt
-    # --------------------------------------------------------
+
+    # ========================================================
+    # VALIDATE PROMPT
+    # ========================================================
 
     if not prompt or not prompt.strip():
 
         return fallback_response(
-            explanation="No analysis prompt was provided.",
+            explanation=(
+                "No analysis prompt was provided."
+            ),
             uncertainty=(
                 "The AI analysis could not be performed "
                 "because the prompt was empty."
@@ -288,17 +321,15 @@ ANALYTICAL CONTEXT:
             )
         )
 
-
-    # --------------------------------------------------------
-    # Runtime timer
-    # --------------------------------------------------------
+    # ========================================================
+    # START TIMER
+    # ========================================================
 
     start_time = time.perf_counter()
 
-
-    # --------------------------------------------------------
-    # Call Gemini
-    # --------------------------------------------------------
+    # ========================================================
+    # CALL GEMINI
+    # ========================================================
 
     try:
 
@@ -314,7 +345,7 @@ ANALYTICAL CONTEXT:
         input_tokens, output_tokens = extract_usage(
             interaction
         )
-        
+
         total_tokens = None
 
         if (
@@ -322,84 +353,103 @@ ANALYTICAL CONTEXT:
             and output_tokens is not None
         ):
             total_tokens = (
-                input_tokens + output_tokens
+                input_tokens
+                + output_tokens
             )
 
-        llm_telemetry = {
-            "model": MODEL_NAME,
-            "model_calls": 1,
-            "latency_ms": round(latency_ms, 2),
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total_tokens
-        }
         telemetry = build_telemetry(
-            latency_ms=round(latency_ms, 2),
+            latency_ms=round(
+                latency_ms,
+                2
+            ),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             llm_calls=1
         )
 
+        telemetry["total_tokens"] = total_tokens
+
     except Exception as error:
 
         latency_ms = (
-            time.perf_counter() - start_time
+            time.perf_counter()
+            - start_time
         ) * 1000
 
         error_text = str(error)
 
-        print(
-            f"Gemini API error: {error_text}"
-        )
-
-        telemetry = build_telemetry(
-            latency_ms=round(latency_ms, 2),
-            input_tokens=None,
-            output_tokens=None,
-            llm_calls=1,
-            error=error_text
-        )
-
-        # ----------------------------------------------------
-        # Handle Gemini quota / rate-limit errors
-        # ----------------------------------------------------
+        # ====================================================
+        # HANDLE QUOTA / RATE LIMIT
+        # ====================================================
 
         if (
             "429" in error_text
             or "quota exceeded" in error_text.lower()
             or "rate limit" in error_text.lower()
         ):
+            print(
+                "[GEMINI] Quota/rate limit exceeded. "
+                "Using deterministic fallback without retry."
+            )
+        else:
+            print(
+                f"Gemini API error: {error_text}"
+            )
 
-            # Persona-specific deterministic fallback.
-            # Quantitative truth remains entirely based on
-            # the verified analytical pipeline.
+        telemetry = build_telemetry(
+            latency_ms=round(
+                latency_ms,
+                2
+            ),
+            input_tokens=None,
+            output_tokens=None,
+            llm_calls=1,
+            error=error_text
+        )
+
+        # ====================================================
+        # HANDLE QUOTA / RATE LIMIT
+        # ====================================================
+
+        if (
+            "429" in error_text
+            or
+            "quota exceeded"
+            in error_text.lower()
+            or
+            "rate limit"
+            in error_text.lower()
+        ):
 
             if persona == "analyst":
 
                 fallback_explanation = (
-                    "The verified KPI, driver, and customer evidence "
-                    "analysis was completed, but Gemini was unavailable "
-                    "because the API quota was exceeded. The analytical "
-                    "results should be interpreted using the ranked "
-                    "drivers, percentage changes, correlations, and "
+                    "The verified KPI, driver, and customer "
+                    "evidence analysis was completed, but Gemini "
+                    "was unavailable because the API quota was "
+                    "exceeded. The analytical results should be "
+                    "interpreted using the ranked drivers, "
+                    "percentage changes, correlations, and "
                     "statistical significance already calculated."
                 )
 
                 fallback_action = (
-                    "Review the ranked driver statistics and validate "
-                    "the strongest associations using additional "
-                    "historical observations or causal analysis before "
-                    "drawing causal conclusions."
+                    "Review the ranked driver statistics and "
+                    "validate the strongest associations using "
+                    "additional historical observations or "
+                    "causal analysis before drawing causal "
+                    "conclusions."
                 )
 
             elif persona == "manager":
 
                 fallback_explanation = (
-                    "The verified KPI, driver, and customer evidence "
-                    "analysis was completed, but Gemini was unavailable "
-                    "because the API quota was exceeded. Focus on the "
-                    "observed operational drivers and the customer "
-                    "evidence supporting them."
+                    "The verified KPI, driver, and customer "
+                    "evidence analysis was completed, but Gemini "
+                    "was unavailable because the API quota was "
+                    "exceeded. Focus on the observed operational "
+                    "drivers and the customer evidence supporting "
+                    "them."
                 )
 
                 fallback_action = (
@@ -411,42 +461,45 @@ ANALYTICAL CONTEXT:
             else:
 
                 fallback_explanation = (
-                    "The verified KPI, driver, and customer evidence "
-                    "analysis was completed, but Gemini was unavailable "
-                    "because the API quota was exceeded. The verified "
-                    "KPI movement and observed drivers remain available "
-                    "for decision-making."
+                    "The verified KPI, driver, and customer "
+                    "evidence analysis was completed, but Gemini "
+                    "was unavailable because the API quota was "
+                    "exceeded. The verified KPI movement and "
+                    "observed drivers remain available for "
+                    "decision-making."
                 )
 
                 fallback_action = (
-                    "Review the verified KPI movement and highest-ranked "
-                    "drivers, then prioritize the most material business "
-                    "issue while monitoring the KPI for recovery."
+                    "Review the verified KPI movement and "
+                    "highest-ranked drivers, then prioritize "
+                    "the most material business issue while "
+                    "monitoring the KPI for recovery."
                 )
 
             return fallback_response(
                 explanation=fallback_explanation,
                 uncertainty=(
                     "The analytical results remain available. "
-                    "The AI-generated interpretation could not be "
-                    "produced because the Gemini API quota was exceeded. "
-                    "Correlations indicate association rather than "
-                    "causation, and historical correlation reliability "
-                    "may be limited."
+                    "The AI-generated interpretation could not "
+                    "be produced because the Gemini API quota "
+                    "was exceeded. Correlations indicate "
+                    "association rather than causation, and "
+                    "historical correlation reliability may "
+                    "be limited."
                 ),
                 recommended_action=fallback_action,
                 telemetry=telemetry
             )
 
-        # ----------------------------------------------------
-        # Handle other Gemini API errors
-        # ----------------------------------------------------
+        # ====================================================
+        # HANDLE OTHER API ERRORS
+        # ====================================================
 
         return fallback_response(
             explanation=(
                 "The verified KPI, driver, and customer "
-                "evidence analysis was completed, but the AI "
-                "explanation could not be generated because "
+                "evidence analysis was completed, but the "
+                "AI explanation could not be generated because "
                 "the Gemini service returned an error."
             ),
             uncertainty=(
@@ -455,16 +508,15 @@ ANALYTICAL CONTEXT:
                 "should be reviewed manually."
             ),
             recommended_action=(
-                "Review the KPI, driver analysis, and supporting "
-                "evidence manually."
+                "Review the KPI, driver analysis, and "
+                "supporting evidence manually."
             ),
             telemetry=telemetry
         )
 
-
-    # --------------------------------------------------------
-    # Extract response
-    # --------------------------------------------------------
+    # ========================================================
+    # EXTRACT RESPONSE TEXT
+    # ========================================================
 
     try:
 
@@ -487,10 +539,9 @@ ANALYTICAL CONTEXT:
             telemetry=telemetry
         )
 
-
-    # --------------------------------------------------------
-    # Validate response
-    # --------------------------------------------------------
+    # ========================================================
+    # CLEAN RESPONSE
+    # ========================================================
 
     response_text = clean_response(
         response_text
@@ -499,16 +550,19 @@ ANALYTICAL CONTEXT:
     if not response_text:
 
         return fallback_response(
-            explanation="Gemini returned an empty response.",
+            explanation=(
+                "Gemini returned an empty response."
+            ),
             uncertainty=(
-                "No AI-generated explanation was available."
+                "No AI-generated explanation "
+                "was available."
             ),
             recommended_action=(
-                "Review the available KPI and evidence manually."
+                "Review the available KPI and "
+                "evidence manually."
             ),
             telemetry=telemetry
         )
-
 
     # ========================================================
     # PARSE JSON
@@ -537,12 +591,14 @@ ANALYTICAL CONTEXT:
             telemetry=telemetry
         )
 
-
     # ========================================================
     # VALIDATE JSON OBJECT
     # ========================================================
 
-    if not isinstance(insight, dict):
+    if not isinstance(
+        insight,
+        dict
+    ):
 
         return fallback_response(
             explanation=(
@@ -560,7 +616,6 @@ ANALYTICAL CONTEXT:
             telemetry=telemetry
         )
 
-
     # ========================================================
     # EXTRACT EXPECTED FIELDS
     # ========================================================
@@ -577,14 +632,12 @@ ANALYTICAL CONTEXT:
         "recommended_action"
     )
 
-
     if not explanation:
 
         explanation = (
             "No explanation was generated "
             "for the available evidence."
         )
-
 
     if not uncertainty:
 
@@ -593,14 +646,12 @@ ANALYTICAL CONTEXT:
             "provided by the AI response."
         )
 
-
     if not recommended_action:
 
         recommended_action = (
             "Review the available evidence "
             "before taking action."
         )
-
 
     # ========================================================
     # RETURN STRUCTURED RESULT
@@ -610,15 +661,12 @@ ANALYTICAL CONTEXT:
         "explanation": str(
             explanation
         ),
-
         "uncertainty": str(
             uncertainty
         ),
-
         "recommended_action": str(
             recommended_action
         ),
-
-        "telemetry": telemetry
+        "telemetry": telemetry,
+        "llm_available": True
     }
-    

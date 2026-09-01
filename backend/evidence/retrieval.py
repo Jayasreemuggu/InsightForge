@@ -7,13 +7,18 @@ def retrieve_feedback(
     date: str,
     keywords: list[str]
 ) -> pd.DataFrame:
+
     df = pd.read_csv(file_path)
 
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(
+        df["date"]
+    )
+
+    target_date = pd.to_datetime(date)
 
     filtered = df[
         (df["region"] == region) &
-        (df["date"] == pd.to_datetime(date))
+        (df["date"] == target_date)
     ].copy()
 
     if filtered.empty:
@@ -23,22 +28,32 @@ def retrieve_feedback(
         return filtered
 
     # Convert driver names such as
-    # "support_resolution_hours" into meaningful terms.
+    # support_resolution_hours
+    # into meaningful search terms.
     terms = []
 
     for keyword in keywords:
-        keyword = str(keyword).lower().replace("_", " ")
+
+        keyword = (
+            str(keyword)
+            .lower()
+            .replace("_", " ")
+        )
 
         terms.append(keyword)
 
         for word in keyword.split():
+
             if len(word) >= 4:
                 terms.append(word)
 
-    # Remove duplicates while preserving order
-    terms = list(dict.fromkeys(terms))
+    # Remove duplicates while preserving order.
+    terms = list(
+        dict.fromkeys(terms)
+    )
 
     def matches_feedback(text):
+
         text = str(text).lower()
 
         return any(
@@ -47,7 +62,9 @@ def retrieve_feedback(
         )
 
     relevant = filtered[
-        filtered["feedback"].apply(matches_feedback)
+        filtered["feedback"].apply(
+            matches_feedback
+        )
     ].copy()
 
     return relevant

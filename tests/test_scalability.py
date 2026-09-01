@@ -1,101 +1,64 @@
-import concurrent.futures
-import requests
 import time
+import pandas as pd
+
+from backend.analysis_pipeline import run_analysis
 
 
-URL = "http://127.0.0.1:8000/analyze"
+def test_scalability_large_dataset(tmp_path):
 
-PAYLOAD = {
-    "sales_file": "data/sales.csv",
-    "feedback_file": "data/customer_feedback.csv",
-    "region": "North",
-    "date": "2025-06-01",
-    "persona": "Analyst"
-}
+    # Create a larger synthetic sales dataset
+    rows = []
 
+    regions = ["North", "South", "East", "West"]
 
-def send_request(request_id):
-    start = time.perf_counter()
+    for month in pd.date_range("2024-01-01", "2025-06-01", freq="MS"):
 
-    try:
-        response = requests.post(
-            URL,
-            json=PAYLOAD,
-            timeout=60
-        )
+        for region in regions:
 
-        elapsed = time.perf_counter() - start
+            for i in range(250):
 
-        return {
-            "id": request_id,
-            "status": response.status_code,
-            "time": elapsed
-        }
+                rows.append({
+                    "date": month,
+                    "region": region,
+                    "revenue": 1000 + (i % 100)
+                })
 
-    except Exception as e:
-        elapsed = time.perf_counter() - start
+    sales_df = pd.DataFrame(rows)
 
-        return {
-            "id": request_id,
-            "status": "ERROR",
-            "time": elapsed,
-            "error": str(e)
-        }
+    sales_file = tmp_path / "large_sales.csv"
+    sales_df.to_csv(sales_file, index=False)
 
+    # Minimal feedback dataset
+    feedback_df = pd.DataFrame({
+        "date": ["2025-06-01"],
+        "region": ["North"],
+        "feedback": [
+            "Product usage has decreased because several issues remain unresolved."
+        ]
+    })
 
-def run_test(number_of_requests):
+    feedback_file = tmp_path / "feedback.csv"
+    feedback_df.to_csv(feedback_file, index=False)
 
     start = time.perf_counter()
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=number_of_requests
-    ) as executor:
+    result = run_analysis(
+        sales_file=str(sales_file),
+        feedback_file=str(feedback_file),
+        region="North",
+        date="2025-06-01",
+        persona="Executive"
+    )
 
-        results = list(
-            executor.map(
-                send_request,
-                range(number_of_requests)
-            )
-        )
+    elapsed = time.perf_counter() - start
 
-    total_time = time.perf_counter() - start
+    print(f"\nScalability test runtime: {elapsed:.3f}s")
+    print(f"Rows processed: {len(sales_df)}")
 
-    successful = [
-        r for r in results
-        if r["status"] == 200
-    ]
+    # Pipeline must return a valid structured result
+    assert isinstance(result, dict)
 
-    failed = [
-        r for r in results
-        if r["status"] != 200
-    ]
+    # Pipeline should finish within a reasonable test limit
+    assert elapsed < 30
 
-    print("\n========== SCALABILITY TEST ==========")
-    print(f"Requests        : {number_of_requests}")
-    print(f"Total time      : {total_time:.2f} seconds")
-    print(f"Successful      : {len(successful)}")
-    print(f"Failed          : {len(failed)}")
-
-    if successful:
-        avg = (
-            sum(r["time"] for r in successful)
-            / len(successful)
-        )
-
-        print(f"Average latency : {avg:.2f} seconds")
-
-    print("======================================")
-
-    for result in results:
-        print(result)
-
-
-if __name__ == "__main__":
-
-    for count in [2, 5, 10]:
-
-        print(
-            f"\n\nTesting {count} concurrent requests..."
-        )
-
-        run_test(count)
+    print("SCALABILITY TEST PASSED")
